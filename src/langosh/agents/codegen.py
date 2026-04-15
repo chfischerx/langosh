@@ -69,13 +69,25 @@ def _compile_simple_source(definition: dict, graph_id: str) -> str:
     """Generate Python source for a simple ReAct-style agent."""
     system_prompt = definition.get("system_prompt", "You are a helpful assistant.")
     tool_names: list[str] = definition.get("tools", [])
-    model = definition.get("model") or DEFAULT_MODEL
+    pinned_model = definition.get("model")
 
     tool_imports, tool_symbols = _resolve_tool_imports(tool_names)
 
     safe_prompt = system_prompt.replace('"""', "'''")
     tools_arg = "[" + ", ".join(tool_symbols) + "]"
     imports_block = "\n".join(tool_imports)
+
+    # Two emission modes:
+    #   - Pinned model: the user chose one at /create time. Bake it.
+    #   - Unpinned: read DEFAULT_MODEL from the server's env at runtime; the
+    #     hardcoded value is just a safety net for running the module
+    #     standalone (outside the server).
+    if pinned_model:
+        os_import = ""
+        default_line = f"DEFAULT_MODEL = {pinned_model!r}"
+    else:
+        os_import = "import os\n"
+        default_line = f'DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", {DEFAULT_MODEL!r})'
 
     return (
         f'"""{graph_id} — generated from definition.json.\n'
@@ -85,10 +97,11 @@ def _compile_simple_source(definition: dict, graph_id: str) -> str:
         f"will regenerate this module on save.\n"
         f'"""\n'
         f"\n"
+        f"{os_import}"
         f"from langgraph.prebuilt import create_react_agent\n"
         f"{imports_block}\n"
         f"\n"
-        f"DEFAULT_MODEL = {model!r}\n"
+        f"{default_line}\n"
         f'SYSTEM_PROMPT = """{safe_prompt}"""\n'
         f"\n"
         f"graph = create_react_agent(\n"

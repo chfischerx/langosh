@@ -45,11 +45,22 @@ def _extract_functions(definition: dict) -> list[dict]:
     return functions
 
 
-def create_agent(name: str, description: str, instructions: str) -> str:
+def create_agent(
+    name: str,
+    description: str,
+    instructions: str,
+    graph_model: str | None = None,
+) -> str:
     """Create a new graph from user-provided name, description, and instructions.
 
     Steps: LLM produces JSON → we extract function bodies → write the generated
     Python module under <agents_path>/graphs/<id>/ → register in langgraph.json.
+
+    `graph_model` is the model the GENERATED graph will call at runtime
+    (independent of the CLI's active model used to build the JSON). Format:
+    `"provider:model-id"`. If omitted, the generated module will read
+    `DEFAULT_MODEL` from the server's environment at runtime.
+
     Returns a human-readable summary string.
     """
     from ..config import DEFAULT_MODELS, get_settings
@@ -89,6 +100,13 @@ def create_agent(name: str, description: str, instructions: str) -> str:
         state.console.print("[dim]Raw response:[/dim]")
         state.console.print(result["text"][:2000])
         return "Agent creation failed — no valid JSON definition found."
+
+    # Honor an explicit per-graph runtime model; clear the LLM's own choice
+    # if the user opted for server-env-driven resolution.
+    if graph_model:
+        definition["model"] = graph_model
+    else:
+        definition.pop("model", None)
 
     functions = _extract_functions(definition)
 

@@ -189,9 +189,44 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             state.console.print("[dim]Cancelled.[/dim]")
             return "continue"
 
+        # Runtime model — independent of the CLI's active model (which is only
+        # used to drive the LLM that writes the JSON). Options:
+        #   - server default (reads DEFAULT_MODEL from the server's env at runtime)
+        #   - match the CLI's current active model
+        #   - custom "provider:model-id" string
+        cur_provider = state.active_model.get("provider") or ""
+        cur_model_id = state.active_model.get("model_id") or ""
+        cur_combined = f"{cur_provider}:{cur_model_id}" if cur_provider and cur_model_id else ""
+
+        choices = ["Use server DEFAULT_MODEL (recommended)"]
+        if cur_combined:
+            choices.append(f"Match CLI active model ({cur_combined})")
+        choices.append("Enter custom (provider:model-id)")
+
+        model_choice = questionary.select("Runtime model for this graph:", choices=choices).ask()
+        if model_choice is None:
+            state.console.print("[dim]Cancelled.[/dim]")
+            return "continue"
+
+        if model_choice.startswith("Use server"):
+            graph_model = None
+        elif model_choice.startswith("Match CLI"):
+            graph_model = cur_combined
+        else:
+            graph_model = questionary.text(
+                "Model (format: provider:model-id, e.g. anthropic:claude-sonnet-4-5-20250929):",
+                validate=lambda t: True if ":" in t and t.strip() else "Expected provider:model-id",
+            ).ask()
+            if graph_model is None:
+                state.console.print("[dim]Cancelled.[/dim]")
+                return "continue"
+            graph_model = graph_model.strip()
+
         state.console.print()
         try:
-            summary = create_agent(name.strip(), description.strip(), instructions.strip())
+            summary = create_agent(
+                name.strip(), description.strip(), instructions.strip(), graph_model=graph_model,
+            )
             state.console.print(f"\n[green]{summary}[/green]")
         except Exception as e:
             state.console.print(f"[bold red]Error creating agent:[/bold red] {e}")
