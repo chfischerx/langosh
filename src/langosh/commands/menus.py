@@ -46,6 +46,7 @@ AGENTS_COMMANDS_MENU = [
     ("/select", "Select a graph (creates a server thread)"),
     ("/create", "Create a new graph (LLM-generated, registered in langgraph.json)"),
     ("/edit", "Edit selected graph (LLM conversation; regen on save)"),
+    ("/compile", "Regenerate __init__.py from definition.json"),
     ("/test", "Run on the server in the active thread"),
     ("/graph", "Visualize the selected graph"),
     ("/clc", "Reset the active thread"),

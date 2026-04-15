@@ -291,6 +291,53 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             state.console.print(f"[bold red]Error visualizing graph:[/bold red] {e}")
         return "continue"
 
+    if cmd_name == "compile":
+        import json as _json
+
+        import questionary
+
+        from ..agents import codegen, registry
+
+        graph_id = parts[1].strip() if len(parts) > 1 else state.active_graph_id or None
+        if not graph_id:
+            graphs = registry.list_graphs()
+            if not graphs:
+                state.console.print("[dim]No graphs in langgraph.json.[/dim]")
+                return "continue"
+            choice = questionary.select("Select graph to compile:", choices=list(graphs.keys())).ask()
+            if choice is None:
+                state.console.print("[dim]Cancelled.[/dim]")
+                return "continue"
+            graph_id = choice
+
+        folder = registry.graph_dir(graph_id)
+        def_path = folder / "definition.json"
+        if not def_path.is_file():
+            state.console.print(
+                f"[yellow]No definition.json in {folder}.[/yellow]\n"
+                "[dim]This looks like a hand-written graph — edit `__init__.py` "
+                "directly, then restart langosh-server.[/dim]"
+            )
+            return "continue"
+
+        try:
+            definition = _json.loads(def_path.read_text())
+            funcs_dir = folder / "functions"
+            functions: list[dict] = []
+            if funcs_dir.is_dir():
+                for fn_path in sorted(funcs_dir.glob("*.py")):
+                    functions.append({"name": fn_path.stem, "code": fn_path.read_text()})
+            init_path = codegen.write_compiled_graph(graph_id, definition, functions)
+        except Exception as e:
+            state.console.print(f"[bold red]Codegen failed:[/bold red] {e}")
+            return "continue"
+
+        state.console.print(
+            f"[green]Regenerated {init_path}[/green]\n"
+            "[dim]Restart langosh-server to apply.[/dim]"
+        )
+        return "continue"
+
     if cmd_name == "delete":
         import shutil
 
