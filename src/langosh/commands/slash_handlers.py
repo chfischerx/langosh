@@ -361,13 +361,20 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             state.console.print(f"[dim]No graphs in {langgraph_json_path()}.[/dim]")
             return "continue"
 
-        # Look up assistants per graph_id (best-effort — server may be down)
+        # Look up assistants per graph_id (best-effort — server may be down).
+        # Health-check first (3s) so we don't hang on the SDK's default timeout.
         assistants_by_graph: dict[str, list[str]] = {}
+        server_ok = False
         try:
-            for a in asyncio.run(server_client.list_assistants(limit=100)):
-                assistants_by_graph.setdefault(a.get("graph_id", ""), []).append(a.get("assistant_id", "")[:8])
-            server_ok = True
-        except Exception:
+            if asyncio.run(server_client.health_check()):
+                async def _fetch():
+                    return await asyncio.wait_for(
+                        server_client.list_assistants(limit=100), timeout=5.0
+                    )
+                for a in asyncio.run(_fetch()):
+                    assistants_by_graph.setdefault(a.get("graph_id", ""), []).append(a.get("assistant_id", "")[:8])
+                server_ok = True
+        except (asyncio.TimeoutError, Exception):
             server_ok = False
 
         table = Table(show_header=True, header_style="bold", padding=(0, 1))

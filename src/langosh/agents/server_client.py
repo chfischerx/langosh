@@ -19,8 +19,13 @@ from ..settings import get_server_url
 StreamEventCallback = Callable[[str, dict], Awaitable[None]]
 
 
-def _client():
-    return get_client(url=get_server_url())
+# Default per-request timeout. Long enough for normal LLM streams; short
+# enough that an unreachable server fails fast instead of hanging the CLI.
+_DEFAULT_TIMEOUT = 30.0
+
+
+def _client(timeout: float = _DEFAULT_TIMEOUT):
+    return get_client(url=get_server_url(), timeout=timeout)
 
 
 async def health_check() -> bool:

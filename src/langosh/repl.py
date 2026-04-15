@@ -149,7 +149,15 @@ def repl(app) -> None:
 
             state.console.print(f"[dim]> {line}[/dim]")
 
-            action = handle_slash_command(cmd_name, parts)
+            try:
+                action = handle_slash_command(cmd_name, parts)
+            except KeyboardInterrupt:
+                state.console.print("\n[yellow]Interrupted.[/yellow]")
+                continue
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
+                continue
+
             if action == "break":
                 break
             if action == "continue":
@@ -165,6 +173,8 @@ def repl(app) -> None:
                 pass
             except SystemExit:
                 pass
+            except KeyboardInterrupt:
+                state.console.print("\n[yellow]Interrupted.[/yellow]")
             except Exception as e:
                 state.console.print(f"[bold red]Error:[/bold red] {e}")
             continue
