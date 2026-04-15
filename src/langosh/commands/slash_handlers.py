@@ -201,7 +201,8 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
         choices = ["Use server DEFAULT_MODEL (recommended)"]
         if cur_combined:
             choices.append(f"Match CLI active model ({cur_combined})")
-        choices.append("Enter custom (provider:model-id)")
+        choices.append("Pick from model catalog")
+        choices.append("Enter manually (provider:model-id)")
 
         model_choice = questionary.select("Runtime model for this graph:", choices=choices).ask()
         if model_choice is None:
@@ -212,6 +213,25 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             graph_model = None
         elif model_choice.startswith("Match CLI"):
             graph_model = cur_combined
+        elif model_choice.startswith("Pick from"):
+            if not state.model_list:
+                state.console.print(
+                    "[dim]No models cached yet. Run /fetchmodels first "
+                    "(or pick 'Enter manually').[/dim]"
+                )
+                return "continue"
+            catalog = sorted(f"{m.provider}:{m.id}" for m in state.model_list)
+            graph_model = questionary.autocomplete(
+                "Model (type to filter; Tab/arrow to complete):",
+                choices=catalog,
+                validate=lambda t: (
+                    True if t and ":" in t and t in catalog else "Pick one from the list"
+                ),
+            ).ask()
+            if graph_model is None:
+                state.console.print("[dim]Cancelled.[/dim]")
+                return "continue"
+            graph_model = graph_model.strip()
         else:
             graph_model = questionary.text(
                 "Model (format: provider:model-id, e.g. anthropic:claude-sonnet-4-5-20250929):",
