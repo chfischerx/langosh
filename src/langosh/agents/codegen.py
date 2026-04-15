@@ -21,13 +21,24 @@ DEFAULT_MODEL = "anthropic:claude-sonnet-4-5-20250929"
 
 # Map tool-name → (module_path, symbol). Extend as we add tool packages.
 _TOOL_IMPORTS: dict[str, tuple[str, str]] = {
+    # files
     "read_file": ("langosh_tools.files", "read_file"),
     "write_file": ("langosh_tools.files", "write_file"),
     "edit_file": ("langosh_tools.files", "edit_file"),
     "list_directory": ("langosh_tools.files", "list_directory"),
     "glob_files": ("langosh_tools.files", "glob_files"),
     "grep_files": ("langosh_tools.files", "grep_files"),
+    # python sandbox
     "execute_python": ("langosh_tools.python_exec", "execute_python"),
+    # web
+    "web_search": ("langosh_tools.websearch", "web_search"),
+    "fetch_rss": ("langosh_tools.rss", "fetch_rss"),
+    # slack (optional dep: slack-sdk)
+    "send_slack_message": ("langosh_tools.slack", "send_slack_message"),
+    "ask_slack": ("langosh_tools.slack", "ask_slack"),
+    # telegram (optional dep: python-telegram-bot)
+    "send_telegram_message": ("langosh_tools.telegram", "send_telegram_message"),
+    "ask_telegram": ("langosh_tools.telegram", "ask_telegram"),
 }
 
 
