@@ -217,6 +217,31 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
 
         return "continue"
 
+    if cmd_name == "graph":
+        from ..agents.compiler import compile_agent
+        from ..agents.runner import _load_functions
+        from ..agents.store import load_agent
+
+        agent_id = state.active_agent_id
+        if not agent_id:
+            state.console.print("[red]No agent selected. Use /select first.[/red]")
+            return "continue"
+
+        agent_data = load_agent(agent_id)
+        if not agent_data or not agent_data.get("definition"):
+            state.console.print(f"[red]No definition found for agent: {agent_id}[/red]")
+            return "continue"
+
+        try:
+            functions = _load_functions(agent_id)
+            graph = compile_agent(agent_data["definition"], functions)
+            ascii_graph = graph.get_graph().draw_ascii()
+            state.console.print(f"\n[bold]Graph: {agent_id}[/bold]\n")
+            state.console.print(ascii_graph)
+        except Exception as e:
+            state.console.print(f"[bold red]Error visualizing graph:[/bold red] {e}")
+        return "continue"
+
     if cmd_name == "delete":
         import questionary
 

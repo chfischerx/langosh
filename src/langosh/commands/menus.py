@@ -45,6 +45,7 @@ AGENTS_COMMANDS_MENU = [
     ("/create", "Create a new agent"),
     ("/edit", "Edit selected agent (LLM conversation)"),
     ("/test", "Test selected agent locally"),
+    ("/graph", "Visualize agent graph"),
     ("/list", "List existing agents"),
     ("/delete", "Delete an agent"),
     ("/status", "Show git status"),

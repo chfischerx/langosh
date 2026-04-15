@@ -110,30 +110,30 @@ def send_edit_query(text: str) -> None:
     state.agent_messages.append({"role": "user", "content": text})
     messages_to_send = apply_window("agent", state.agent_messages, provider, model_id)
 
-    async def _on_event(event_type: str, data: dict) -> None:
-        name = data.get("name", "")
-        if event_type == "tool_call":
-            state.console.print(f"[dim]  ↳ calling {name}...[/dim]")
-        elif event_type == "tool_result":
-            preview = data.get("result_preview", "")[:100]
-            state.console.print(f"[dim]  ↳ {name} done[/dim]")
-
     start = time.monotonic()
-    state.console.print(f"[dim]Calling {model_display_name() or model_id}...[/dim]")
+    with state.console.status(f"[dim]Calling {model_display_name() or model_id}...[/dim]") as status:
+        async def _on_event(event_type: str, data: dict) -> None:
+            name = data.get("name", "")
+            if event_type == "tool_call":
+                status.stop()
+                state.console.print(f"[dim]  ↳ calling {name}...[/dim]")
+            elif event_type == "tool_result":
+                state.console.print(f"[dim]  ↳ {name} done[/dim]")
+                status.start()
 
-    result = asyncio.run(
-        call_with_tools(
-            provider=provider,
-            model_id=model_id,
-            api_key=None,
-            system=BUILDER_SYSTEM_PROMPT,
-            messages=messages_to_send,
-            tools=TOOLS,
-            tool_dispatcher=_make_guarded_dispatcher(agent_id),
-            on_event=_on_event,
-            sub_mode=state.agent_sub_mode,
+        result = asyncio.run(
+            call_with_tools(
+                provider=provider,
+                model_id=model_id,
+                api_key=None,
+                system=BUILDER_SYSTEM_PROMPT,
+                messages=messages_to_send,
+                tools=TOOLS,
+                tool_dispatcher=_make_guarded_dispatcher(agent_id),
+                on_event=_on_event,
+                sub_mode=state.agent_sub_mode,
+            )
         )
-    )
     elapsed = time.monotonic() - start
 
     # Add assistant response and save
