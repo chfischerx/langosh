@@ -34,16 +34,22 @@ def send_query(text: str) -> None:
     messages_to_send = apply_window("chat", state.chat_messages, provider, model_id)
 
     start = time.monotonic()
-    with state.console.status(f"[dim]Calling {model_display_name() or model_id}...[/dim]"):
-        result = asyncio.run(
-            call_llm_simple(
-                provider=provider,
-                model_id=model_id,
-                api_key=None,
-                system=CHAT_SYSTEM_PROMPT,
-                messages=messages_to_send,
+    try:
+        with state.console.status(f"[dim]Calling {model_display_name() or model_id}...[/dim]"):
+            result = asyncio.run(
+                call_llm_simple(
+                    provider=provider,
+                    model_id=model_id,
+                    api_key=None,
+                    system=CHAT_SYSTEM_PROMPT,
+                    messages=messages_to_send,
+                )
             )
-        )
+    except KeyboardInterrupt:
+        if state.chat_messages and state.chat_messages[-1].get("role") == "user":
+            state.chat_messages.pop()
+        state.console.print("\n[yellow]Interrupted.[/yellow]")
+        return
     elapsed = time.monotonic() - start
 
     state.chat_messages.append({"role": "assistant", "content": result["text"]})
@@ -106,19 +112,25 @@ def send_code_query(text: str) -> None:
     start = time.monotonic()
     state.console.print(f"[dim]Calling {model_display_name() or model_id}...[/dim]")
 
-    result = asyncio.run(
-        call_with_tools(
-            provider=provider,
-            model_id=model_id,
-            api_key=None,
-            system=system_prompt,
-            messages=messages_to_send,
-            tools=ALL_TOOLS,
-            tool_dispatcher=make_guarded_dispatcher(state.code_sub_mode, state.console),
-            on_event=_on_event,
-            sub_mode=state.code_sub_mode,
+    try:
+        result = asyncio.run(
+            call_with_tools(
+                provider=provider,
+                model_id=model_id,
+                api_key=None,
+                system=system_prompt,
+                messages=messages_to_send,
+                tools=ALL_TOOLS,
+                tool_dispatcher=make_guarded_dispatcher(state.code_sub_mode, state.console),
+                on_event=_on_event,
+                sub_mode=state.code_sub_mode,
+            )
         )
-    )
+    except KeyboardInterrupt:
+        if state.code_messages and state.code_messages[-1].get("role") == "user":
+            state.code_messages.pop()
+        state.console.print("\n[yellow]Interrupted.[/yellow]")
+        return
     elapsed = time.monotonic() - start
 
     state.code_messages.append({"role": "assistant", "content": result["text"]})

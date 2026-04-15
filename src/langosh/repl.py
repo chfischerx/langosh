@@ -175,11 +175,15 @@ def repl(app) -> None:
         if state.current_mode == "chat":
             try:
                 send_query(line)
+            except KeyboardInterrupt:
+                state.console.print("\n[yellow]Interrupted.[/yellow]")
             except Exception as e:
                 state.console.print(f"[bold red]Error:[/bold red] {e}")
         elif state.current_mode == "code":
             try:
                 send_code_query(line)
+            except KeyboardInterrupt:
+                state.console.print("\n[yellow]Interrupted.[/yellow]")
             except Exception as e:
                 state.console.print(f"[bold red]Error:[/bold red] {e}")
         elif state.current_mode == "agents" and state.agent_editing:
@@ -187,6 +191,8 @@ def repl(app) -> None:
 
             try:
                 send_edit_query(line)
+            except KeyboardInterrupt:
+                state.console.print("\n[yellow]Interrupted.[/yellow]")
             except Exception as e:
                 state.console.print(f"[bold red]Error:[/bold red] {e}")
         else:
