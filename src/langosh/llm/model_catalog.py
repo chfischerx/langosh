@@ -50,7 +50,7 @@ PROVIDER_CONFIGS: dict[str, dict] = {
             if m.get("id") and _is_openai_chat_model(m["id"])
         ],
     },
-    "aws_bedrock": {"custom_fetch": True},
+    "bedrock_converse": {"custom_fetch": True},
 }
 
 
@@ -60,7 +60,7 @@ def _parse_bedrock_foundation(model_summaries: list[dict]) -> list[ModelInfo]:
         ModelInfo(
             id=m["modelId"],
             name=m.get("modelName", m["modelId"]),
-            provider="aws_bedrock",
+            provider="bedrock_converse",
         )
         for m in model_summaries
         if "ON_DEMAND" in m.get("inferenceTypesSupported", [])
@@ -74,7 +74,7 @@ def _parse_bedrock_profiles(profile_summaries: list[dict]) -> list[ModelInfo]:
         ModelInfo(
             id=p["inferenceProfileId"],
             name=p.get("inferenceProfileName", p["inferenceProfileId"]),
-            provider="aws_bedrock",
+            provider="bedrock_converse",
         )
         for p in profile_summaries
         if p.get("status") == "ACTIVE"
@@ -151,7 +151,7 @@ async def fetch_models(
         configured["openai"] = settings.openai_api_key
     # Bedrock always included — boto3 picks up credentials from
     # ~/.aws/config, env vars, IAM role, or instance profile.
-    configured.setdefault("aws_bedrock", None)
+    configured.setdefault("bedrock_converse", None)
 
     # Claude SDK always included — same models as Anthropic, no API key needed
     configured.setdefault("claude_sdk", None)
@@ -169,7 +169,7 @@ async def fetch_models(
                     _fetch_provider("anthropic", settings.anthropic_api_key)
                 )
             # else: handled below as static fallback
-        elif provider == "aws_bedrock":
+        elif provider == "bedrock_converse":
             tasks[provider] = asyncio.ensure_future(
                 _fetch_bedrock(settings.aws_bedrock_region, settings.aws_bedrock_use_iam_role, api_key)
             )

@@ -9,7 +9,7 @@ DEFAULT_MODELS: dict[str, str] = {
     "openai": "gpt-4o",
     "deepseek": "deepseek-chat",
     "xai": "grok-3-latest",
-    "aws_bedrock": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+    "bedrock_converse": "us.anthropic.claude-sonnet-4-20250514-v1:0",
     "claude_sdk": "claude-sonnet-4-6",
 }
 

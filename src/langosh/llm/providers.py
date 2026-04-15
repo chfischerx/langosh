@@ -58,7 +58,7 @@ async def call_with_tools(
             provider, model_id, api_key, system, messages, tools,
             tool_dispatcher, on_event, max_tool_turns,
         )
-    if provider == "aws_bedrock":
+    if provider == "bedrock_converse":
         from .bedrock import call_bedrock_with_tools
 
         return await call_bedrock_with_tools(
@@ -91,7 +91,7 @@ async def call_llm_simple(
         from .openai_compat import call_openai_simple
 
         return await call_openai_simple(provider, model_id, api_key, system, messages)
-    if provider == "aws_bedrock":
+    if provider == "bedrock_converse":
         from .bedrock import call_bedrock_simple
 
         return await call_bedrock_simple(model_id, api_key, system, messages)

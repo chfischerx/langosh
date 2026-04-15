@@ -93,7 +93,14 @@ def repl(app) -> None:
     # Restore saved model selection
     saved_model = get_setting("active_model")
     if saved_model and isinstance(saved_model, dict):
-        state.active_model["provider"] = saved_model.get("provider")
+        provider = saved_model.get("provider")
+        # Migrate old internal tag: aws_bedrock → bedrock_converse (valid
+        # init_chat_model prefix).
+        if provider == "aws_bedrock":
+            provider = "bedrock_converse"
+            from .settings import set as _set_setting
+            _set_setting("active_model", {"provider": provider, "model_id": saved_model.get("model_id")})
+        state.active_model["provider"] = provider
         state.active_model["model_id"] = saved_model.get("model_id")
 
     saved_sub_mode = get_setting("code_sub_mode")
