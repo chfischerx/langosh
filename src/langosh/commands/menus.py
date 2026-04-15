@@ -41,6 +41,7 @@ CODE_COMMANDS_MENU = [
 ]
 
 AGENTS_COMMANDS_MENU = [
+    ("/server", "Show or set the langosh-server URL"),
     ("/list", "List graphs in langgraph.json"),
     ("/select", "Select a graph (creates a server thread)"),
     ("/create", "Create a new graph (LLM-generated, registered in langgraph.json)"),

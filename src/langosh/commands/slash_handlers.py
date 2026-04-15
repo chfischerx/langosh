@@ -66,6 +66,43 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
         state.console.print("[dim]Type / to see commands, /back to return.[/dim]")
         return "continue"
 
+    if cmd_name == "server":
+        import asyncio
+
+        from ..agents import server_client
+        from ..settings import DEFAULT_SERVER_URL, get_server_url
+        from ..settings import set as set_setting
+
+        new_url = parts[1].strip() if len(parts) > 1 else None
+
+        if new_url:
+            # Light validation; allow http/https only.
+            if not (new_url.startswith("http://") or new_url.startswith("https://")):
+                state.console.print(
+                    f"[bold red]Invalid URL:[/bold red] {new_url} "
+                    "(must start with http:// or https://)"
+                )
+                return "continue"
+            set_setting("server_url", new_url)
+            state.console.print(f"[green]Set server_url to {new_url}[/green]")
+
+        url = get_server_url()
+        try:
+            ok = asyncio.run(server_client.health_check())
+        except Exception:
+            ok = False
+        status = "[green]reachable[/green]" if ok else "[red]unreachable[/red]"
+        from ..agents.registry import langgraph_json_path
+        from ..settings import get_agents_path
+
+        state.console.print(f"[bold]server_url[/bold] [dim]({status})[/dim]: {url}")
+        state.console.print(f"[bold]agents_path[/bold]: {get_agents_path()}")
+        state.console.print(f"[bold]langgraph.json[/bold]: {langgraph_json_path()}")
+        if url == DEFAULT_SERVER_URL and not new_url:
+            state.console.print("[dim]Using built-in default. Override with /server <url> "
+                                "or env LANGOSH_SERVER_URL.[/dim]")
+        return "continue"
+
     if cmd_name == "select":
         import asyncio
         import questionary
