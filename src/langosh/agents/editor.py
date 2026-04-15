@@ -1,8 +1,6 @@
-"""Agent editor — LLM conversation for modifying agents with builder tools."""
+"""Agent editor — LLM conversation for modifying graphs via builder tools."""
 
 import asyncio
-import json
-import os
 import time
 
 import langosh.state as state
@@ -10,48 +8,13 @@ import langosh.state as state
 from ..context import apply_window
 from ..input import model_display_name
 from ..rendering import print_renderables, render_semantic
-from .editor_tools import READ_TOOLS, TOOLS, WRITE_TOOLS, make_editor_dispatch
-_AGENTS_DATA_DIR = os.path.join(os.path.expanduser("~"), ".langosh", "agents")
+from . import codegen, registry
+from .editor_tools import TOOLS, WRITE_TOOLS, make_editor_dispatch
 
 
-def _history_path(agent_id: str) -> str:
-    return os.path.join(_AGENTS_DATA_DIR, agent_id, "history.json")
-
-
-def load_agent_history(agent_id: str) -> tuple[list[dict], str]:
-    """Load conversation history for an agent."""
-    path = _history_path(agent_id)
-    if not os.path.isfile(path):
-        return [], ""
-    try:
-        with open(path) as f:
-            data = json.load(f)
-        return data.get("messages", []), data.get("summary", "")
-    except (json.JSONDecodeError, OSError):
-        return [], ""
-
-
-def save_agent_history(agent_id: str) -> None:
-    """Save current agent conversation history."""
-    path = _history_path(agent_id)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump({"messages": state.agent_messages, "summary": state.agent_summary}, f, ensure_ascii=False)
-
-
-def clear_agent_history(agent_id: str) -> None:
-    """Clear agent conversation history."""
-    path = _history_path(agent_id)
-    if os.path.isfile(path):
-        os.remove(path)
-
-
-def _make_guarded_dispatcher(agent_id: str):
+def _make_guarded_dispatcher(graph_id: str):
     """Create a guarded dispatcher for editor tools respecting agent_sub_mode."""
-    from ..llm.tools import WRITE_TOOLS as _  # noqa — just for the approval widget import
-    from ..llm.tools import make_guarded_dispatcher as _make_base_guarded
-
-    dispatch = make_editor_dispatch(agent_id)
+    dispatch = make_editor_dispatch(graph_id)
 
     # Build a combined dispatcher that routes to editor tools
     async def _dispatch(name: str, args: dict) -> str:
@@ -97,9 +60,9 @@ def send_edit_query(text: str) -> None:
     from ..llm.prompts.builder import BUILDER_SYSTEM_PROMPT
     from ..queries import format_elapsed
 
-    agent_id = state.active_agent_id
-    if not agent_id:
-        state.console.print("[red]No agent selected. Use /select first.[/red]")
+    graph_id = state.active_graph_id
+    if not graph_id:
+        state.console.print("[red]No graph selected. Use /select first.[/red]")
         return
 
     settings = get_settings()
@@ -130,7 +93,7 @@ def send_edit_query(text: str) -> None:
                     system=BUILDER_SYSTEM_PROMPT,
                     messages=messages_to_send,
                     tools=TOOLS,
-                    tool_dispatcher=_make_guarded_dispatcher(agent_id),
+                    tool_dispatcher=_make_guarded_dispatcher(graph_id),
                     on_event=_on_event,
                     sub_mode=state.agent_sub_mode,
                 )
@@ -142,9 +105,21 @@ def send_edit_query(text: str) -> None:
         return
     elapsed = time.monotonic() - start
 
-    # Add assistant response and save
     state.agent_messages.append({"role": "assistant", "content": result["text"]})
-    save_agent_history(agent_id)
+
+    # If the LLM wrote anything, regenerate the deployable Python module so
+    # langgraph.json's pointer keeps matching the canonical JSON definition.
+    tool_calls = result.get("tool_calls", [])
+    wrote_anything = any(tc.get("name") in WRITE_TOOLS for tc in tool_calls)
+    if wrote_anything:
+        try:
+            _regenerate_module(graph_id)
+            state.console.print(
+                f"[dim]  ↳ regenerated {registry.graph_dir(graph_id) / '__init__.py'} "
+                "(restart langosh-server to pick up changes)[/dim]"
+            )
+        except Exception as e:
+            state.console.print(f"[bold red]Codegen failed:[/bold red] {e}")
 
     # Update debug store
     state.last_debug.clear()
@@ -169,7 +144,6 @@ def send_edit_query(text: str) -> None:
 
     print_renderables(state.console, render_semantic(result["text"]))
 
-    tool_calls = result.get("tool_calls", [])
     tool_info = f" | {len(tool_calls)} tool calls" if tool_calls else ""
     cost = result.get("cost_usd")
     cost_info = f" | ${cost:.4f}" if cost else ""
@@ -179,3 +153,23 @@ def send_edit_query(text: str) -> None:
         f"{result['input_tokens']} ↑ / {result['output_tokens']} ↓{tool_info}{cost_info} | "
         f"turn {turns}[/dim]"
     )
+
+
+def _regenerate_module(graph_id: str) -> None:
+    """Reload definition.json + functions/*.py from disk and re-emit the .py."""
+    import json
+    from pathlib import Path
+
+    folder = registry.graph_dir(graph_id)
+    def_path = folder / "definition.json"
+    if not def_path.is_file():
+        raise FileNotFoundError(f"No definition.json for {graph_id} at {def_path}")
+    definition = json.loads(def_path.read_text())
+
+    funcs_dir = folder / "functions"
+    functions: list[dict] = []
+    if funcs_dir.is_dir():
+        for fn_path in sorted(Path(funcs_dir).glob("*.py")):
+            functions.append({"name": fn_path.stem, "code": fn_path.read_text()})
+
+    codegen.write_compiled_graph(graph_id, definition, functions)

@@ -1,11 +1,16 @@
-"""Builder tools for editing agent definitions and functions."""
+"""Builder tools for editing agent definitions and functions.
+
+Tool calls operate on `<agents_path>/graphs/<graph_id>/definition.json` and
+`<agents_path>/graphs/<graph_id>/functions/*.py`. After any WRITE_TOOLS call,
+the editor re-runs codegen so the generated `__init__.py` stays in sync.
+"""
 
 import asyncio
 import json
 import os
 from pathlib import Path
 
-from .store import AGENTS_DIR
+from .registry import graph_dir
 
 # --- Tool schemas (Anthropic format) ---
 
@@ -92,25 +97,25 @@ WRITE_TOOLS = {"edit_definition", "update_definition", "write_function", "edit_f
 
 # --- Tool implementations ---
 
-def _def_path(agent_id: str) -> str:
-    return os.path.join(AGENTS_DIR, agent_id, "definition.json")
+def _def_path(graph_id: str) -> str:
+    return str(graph_dir(graph_id) / "definition.json")
 
 
-def _func_path(agent_id: str, name: str) -> str:
-    return os.path.join(AGENTS_DIR, agent_id, "functions", f"{name}.py")
+def _func_path(graph_id: str, name: str) -> str:
+    return str(graph_dir(graph_id) / "functions" / f"{name}.py")
 
 
-def make_editor_dispatch(agent_id: str):
-    """Create a dispatch dict bound to a specific agent."""
+def make_editor_dispatch(graph_id: str):
+    """Create a dispatch dict bound to a specific graph_id."""
 
     async def read_definition(args: dict) -> str:
-        path = _def_path(agent_id)
+        path = _def_path(graph_id)
         if not os.path.isfile(path):
             return "Error: no definition.json found"
         return await asyncio.to_thread(Path(path).read_text)
 
     async def edit_definition(args: dict) -> str:
-        path = _def_path(agent_id)
+        path = _def_path(graph_id)
         old_str = args["old_str"]
         new_str = args["new_str"]
 
@@ -127,7 +132,7 @@ def make_editor_dispatch(agent_id: str):
         return await asyncio.to_thread(_edit)
 
     async def update_definition(args: dict) -> str:
-        path = _def_path(agent_id)
+        path = _def_path(graph_id)
         patch = args["patch"]
 
         def _update():
@@ -141,20 +146,20 @@ def make_editor_dispatch(agent_id: str):
         return await asyncio.to_thread(_update)
 
     async def list_functions(args: dict) -> str:
-        func_dir = os.path.join(AGENTS_DIR, agent_id, "functions")
+        func_dir = str(graph_dir(graph_id) / "functions")
         if not os.path.isdir(func_dir):
             return "No functions directory"
         files = sorted(f[:-3] for f in os.listdir(func_dir) if f.endswith(".py"))
         return "\n".join(files) if files else "No function files"
 
     async def read_function(args: dict) -> str:
-        path = _func_path(agent_id, args["name"])
+        path = _func_path(graph_id, args["name"])
         if not os.path.isfile(path):
             return f"Error: function '{args['name']}' not found"
         return await asyncio.to_thread(Path(path).read_text)
 
     async def write_function(args: dict) -> str:
-        path = _func_path(agent_id, args["name"])
+        path = _func_path(graph_id, args["name"])
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
         def _write():
@@ -164,7 +169,7 @@ def make_editor_dispatch(agent_id: str):
         return await asyncio.to_thread(_write)
 
     async def edit_function(args: dict) -> str:
-        path = _func_path(agent_id, args["name"])
+        path = _func_path(graph_id, args["name"])
         old_str = args["old_str"]
         new_str = args["new_str"]
 

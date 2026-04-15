@@ -78,17 +78,13 @@ def _mode_bar() -> str:
         mode_label = f"{state.current_mode}:{state.code_sub_mode}"
     elif state.current_mode == "agents" and state.agent_editing:
         mode_label = f"agents:edit:{state.agent_sub_mode}"
-    elif state.current_mode == "agents" and state.active_agent_id:
-        mode_label = f"agents"
+    elif state.current_mode == "agents" and state.active_graph_id:
+        mode_label = "agents"
     else:
         mode_label = state.current_mode
     label = f" {mode_label} "
-    if state.current_mode == "agents" and state.active_agent_id:
-        # Show agent name from metadata
-        from .agents.store import load_agent
-        agent_data = load_agent(state.active_agent_id)
-        agent_name = agent_data.get("metadata", {}).get("name", state.active_agent_id) if agent_data else state.active_agent_id
-        label = f" {mode_label} ({agent_name}) "
+    if state.current_mode == "agents" and state.active_graph_id:
+        label = f" {mode_label} ({state.active_graph_id}) "
     elif state.current_mode in ("chat", "code") and state.active_model["provider"]:
         name = model_display_name()
         if name:

@@ -67,49 +67,51 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
         return "continue"
 
     if cmd_name == "select":
+        import asyncio
         import questionary
 
-        from ..agents.editor import load_agent_history
-        from ..agents.store import list_agents
+        from ..agents import registry, server_client
 
-        # Get agent_id from argument or prompt
-        agent_id = parts[1].strip() if len(parts) > 1 else None
-        if not agent_id:
-            agents = list_agents()
-            if not agents:
-                state.console.print("[dim]No agents found. Use /create first.[/dim]")
+        graph_id = parts[1].strip() if len(parts) > 1 else None
+        if not graph_id:
+            graphs = registry.list_graphs()
+            if not graphs:
+                state.console.print("[dim]No graphs in langgraph.json. Use /create first.[/dim]")
                 return "continue"
-            choices = [f"{a['agent_id']} — {a.get('name', '')}" for a in agents]
-            choice = questionary.rawselect("Select agent:", choices=choices).ask()
+            choices = [f"{gid} — {mod}" for gid, mod in graphs.items()]
+            choice = questionary.rawselect("Select graph:", choices=choices).ask()
             if choice is None:
                 state.console.print("[dim]Cancelled.[/dim]")
                 return "continue"
-            agent_id = choice.split(" — ")[0]
+            graph_id = choice.split(" — ")[0]
 
-        state.active_agent_id = agent_id
+        try:
+            assistant = asyncio.run(server_client.ensure_assistant(graph_id))
+            thread = asyncio.run(server_client.create_thread())
+        except Exception as e:
+            state.console.print(f"[bold red]Server error:[/bold red] {e}")
+            state.console.print("[dim]Is langosh-server running? Check /server.[/dim]")
+            return "continue"
+
+        state.active_graph_id = graph_id
+        state.active_assistant_id = assistant["assistant_id"]
+        state.active_thread_id = thread["thread_id"]
         state.agent_editing = False
-
-        # Load agent conversation history
-        msgs, state.agent_summary = load_agent_history(agent_id)
         state.agent_messages.clear()
-        state.agent_messages.extend(msgs)
+        state.agent_summary = ""
 
-        turns = len([m for m in state.agent_messages if m["role"] == "user"])
-        from ..agents.store import load_agent
-        agent_data = load_agent(agent_id)
-        name = agent_data.get("metadata", {}).get("name", agent_id) if agent_data else agent_id
-        if turns:
-            state.console.print(f"[bold cyan]Selected: {name}[/bold cyan] [dim]({turns} conversation turns)[/dim]")
-        else:
-            state.console.print(f"[bold cyan]Selected: {name}[/bold cyan]")
+        state.console.print(
+            f"[bold cyan]Selected: {graph_id}[/bold cyan] "
+            f"[dim](assistant {state.active_assistant_id[:8]}, thread {state.active_thread_id[:8]})[/dim]"
+        )
         return "continue"
 
     if cmd_name == "edit" and state.current_mode == "agents":
-        if not state.active_agent_id:
-            state.console.print("[red]No agent selected. Use /select first.[/red]")
+        if not state.active_graph_id:
+            state.console.print("[red]No graph selected. Use /select first.[/red]")
             return "continue"
         state.agent_editing = True
-        state.console.print(f"[bold cyan]Editing agent ({state.agent_sub_mode}).[/bold cyan] Describe what to change or fix.")
+        state.console.print(f"[bold cyan]Editing graph ({state.agent_sub_mode}).[/bold cyan] Describe what to change or fix.")
         state.console.print("[dim]/done to exit, /test to run, /plan or /auto for approval mode.[/dim]")
         return "continue"
 
@@ -124,10 +126,10 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
 
         from ..agents.builder import create_agent
 
-        state.console.print("[bold]Create a new agent[/bold]\n")
+        state.console.print("[bold]Create a new graph[/bold]\n")
 
         name = questionary.text(
-            "Agent name:",
+            "Graph name:",
             validate=lambda t: True if t.strip() else "Name cannot be empty",
         ).ask()
         if name is None:
@@ -160,121 +162,150 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
 
     if cmd_name == "test":
         import asyncio
-
         import questionary
-        from rich.table import Table
 
-        from ..agents.runner import test_agent
-        from ..agents.store import list_agents
+        from ..agents import server_client
 
-        # Get agent_id from argument, active selection, or prompt
-        agent_id = parts[1].strip() if len(parts) > 1 else state.active_agent_id or None
-        if not agent_id:
-            agents = list_agents()
-            if not agents:
-                state.console.print("[dim]No agents found. Use /create first.[/dim]")
-                return "continue"
-            choices = [f"{a['agent_id']} — {a.get('name', '')}" for a in agents]
-            choice = questionary.select("Select agent to test:", choices=choices).ask()
-            if choice is None:
-                state.console.print("[dim]Cancelled.[/dim]")
-                return "continue"
-            agent_id = choice.split(" — ")[0]
-
-        test_input = questionary.text("Test message:").ask()
-        if test_input is None or not test_input.strip():
-            state.console.print("[dim]Cancelled.[/dim]")
+        if not state.active_graph_id or not state.active_assistant_id or not state.active_thread_id:
+            state.console.print("[red]No graph selected. Use /select first.[/red]")
             return "continue"
 
-        state.console.print(f"\n[dim]Running agent '{agent_id}'...[/dim]")
-        result = asyncio.run(test_agent(agent_id, test_input.strip()))
+        # Get input from argument or prompt
+        rest = parts[1].strip() if len(parts) > 1 else ""
+        if not rest:
+            rest = questionary.text("Test message:").ask()
+            if not rest or not rest.strip():
+                state.console.print("[dim]Cancelled.[/dim]")
+                return "continue"
+        test_input = rest.strip()
 
-        # Display events timeline
-        events = result.get("events", [])
-        if events:
-            table = Table(show_header=True, header_style="bold", padding=(0, 1))
-            table.add_column("#", justify="right", style="dim")
-            table.add_column("Node")
-            table.add_column("Details")
-            for i, ev in enumerate(events, 1):
-                node = ev.get("node", "?")
-                preview = ev.get("preview", "")[:80]
-                table.add_row(str(i), node, preview)
-            state.console.print(table)
+        async def _on_event(event_type: str, data: dict) -> None:
+            if event_type == "token":
+                state.console.print(data.get("text", ""), end="", soft_wrap=True, highlight=False)
+            elif event_type == "tool_call":
+                state.console.print(f"\n[dim]  ↳ calling {data.get('name', '?')}...[/dim]")
+            elif event_type == "tool_result":
+                preview = data.get("preview", "")[:80]
+                state.console.print(f"[dim]  ↳ done ({preview})[/dim]")
+            elif event_type == "error":
+                state.console.print(f"\n[bold red]Error:[/bold red] {data.get('message', '')}")
 
-        # Display result
-        duration = result.get("duration_ms", 0)
-        status = result.get("status", "unknown")
+        state.agent_messages.append({"role": "user", "content": test_input})
+        state.console.print(f"\n[dim]Running on server (thread {state.active_thread_id[:8]})...[/dim]\n")
+        try:
+            result = asyncio.run(
+                server_client.stream_run(
+                    assistant_id=state.active_assistant_id,
+                    thread_id=state.active_thread_id,
+                    messages=[{"role": "user", "content": test_input}],
+                    on_event=_on_event,
+                )
+            )
+        except KeyboardInterrupt:
+            if state.agent_messages and state.agent_messages[-1].get("role") == "user":
+                state.agent_messages.pop()
+            state.console.print("\n[yellow]Interrupted.[/yellow]")
+            return "continue"
+        except Exception as e:
+            if state.agent_messages and state.agent_messages[-1].get("role") == "user":
+                state.agent_messages.pop()
+            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
+            return "continue"
 
-        if status == "success":
-            state.console.print(f"\n[bold green]Result[/bold green] [dim]({duration}ms)[/dim]")
-            state.console.print(result.get("result", "(no output)"))
-        elif status == "timeout":
-            state.console.print(f"\n[bold red]Timed out[/bold red] [dim]({duration}ms)[/dim]")
-        else:
-            state.console.print(f"\n[bold red]Error[/bold red] [dim]({duration}ms)[/dim]")
-            state.console.print(f"[red]{result.get('error', 'Unknown error')}[/red]")
-
+        text = result.get("text", "")
+        state.agent_messages.append({"role": "assistant", "content": text})
+        turns = len([m for m in state.agent_messages if m["role"] == "user"])
+        state.console.print(f"\n[dim]turn {turns} | run {result.get('run_id', '?')[:8]}[/dim]")
         return "continue"
 
     if cmd_name == "graph":
-        from ..agents.compiler import compile_agent
-        from ..agents.runner import _load_functions
-        from ..agents.store import load_agent
+        import asyncio
 
-        agent_id = state.active_agent_id
-        if not agent_id:
-            state.console.print("[red]No agent selected. Use /select first.[/red]")
+        from ..agents import server_client
+
+        graph_id = state.active_graph_id
+        if not graph_id:
+            state.console.print("[red]No graph selected. Use /select first.[/red]")
             return "continue"
 
-        agent_data = load_agent(agent_id)
-        if not agent_data or not agent_data.get("definition"):
-            state.console.print(f"[red]No definition found for agent: {agent_id}[/red]")
-            return "continue"
-
+        # Prefer importing the local module — gives a clean ASCII via langgraph's renderer
         try:
-            functions = _load_functions(agent_id)
-            graph = compile_agent(agent_data["definition"], functions)
-            ascii_graph = graph.get_graph().draw_ascii()
-            state.console.print(f"\n[bold]Graph: {agent_id}[/bold]\n")
-            state.console.print(ascii_graph)
+            import importlib
+
+            mod = importlib.import_module(f"graphs.{graph_id}")
+            local_graph = getattr(mod, "graph", None)
+            if local_graph is not None:
+                state.console.print(f"\n[bold]Graph: {graph_id}[/bold]\n")
+                state.console.print(local_graph.get_graph().draw_ascii())
+                return "continue"
+        except Exception as e:
+            state.console.print(f"[dim]Local import failed ({e}); fetching from server...[/dim]")
+
+        # Fallback: fetch JSON from server
+        if not state.active_assistant_id:
+            state.console.print("[red]No active assistant; cannot fetch graph from server.[/red]")
+            return "continue"
+        try:
+            data = asyncio.run(server_client.get_assistant_graph(state.active_assistant_id))
+            state.console.print(f"\n[bold]Graph: {graph_id}[/bold] [dim](from server)[/dim]\n")
+            import json
+            state.console.print(json.dumps(data, indent=2))
         except Exception as e:
             state.console.print(f"[bold red]Error visualizing graph:[/bold red] {e}")
         return "continue"
 
     if cmd_name == "delete":
+        import shutil
+
         import questionary
 
-        from ..agents.store import delete_agent, list_agents
+        from ..agents import registry
 
-        agent_id = parts[1].strip() if len(parts) > 1 else state.active_agent_id or None
-        if not agent_id:
-            agents = list_agents()
-            if not agents:
-                state.console.print("[dim]No agents found.[/dim]")
+        graph_id = parts[1].strip() if len(parts) > 1 else state.active_graph_id or None
+        if not graph_id:
+            graphs = registry.list_graphs()
+            if not graphs:
+                state.console.print("[dim]No graphs to delete.[/dim]")
                 return "continue"
-            choices = [f"{a['agent_id']} — {a.get('name', '')}" for a in agents]
-            choice = questionary.select("Select agent to delete:", choices=choices).ask()
+            choice = questionary.select("Select graph to delete:", choices=list(graphs.keys())).ask()
             if choice is None:
                 state.console.print("[dim]Cancelled.[/dim]")
                 return "continue"
-            agent_id = choice.split(" — ")[0]
+            graph_id = choice
 
-        confirm = questionary.confirm(f"Delete agent '{agent_id}' and all its data?", default=False).ask()
+        confirm = questionary.confirm(
+            f"Remove graph '{graph_id}' from langgraph.json and delete its folder?",
+            default=False,
+        ).ask()
         if not confirm:
             state.console.print("[dim]Cancelled.[/dim]")
             return "continue"
 
-        if delete_agent(agent_id):
-            # Clear state if this was the selected agent
-            if state.active_agent_id == agent_id:
-                state.active_agent_id = ""
-                state.agent_editing = False
-                state.agent_messages.clear()
-                state.agent_summary = ""
-            state.console.print(f"[green]Deleted agent: {agent_id}[/green]")
+        removed_entry = registry.remove_graph(graph_id)
+        folder = registry.graph_dir(graph_id)
+        if folder.exists():
+            shutil.rmtree(folder)
+            removed_folder = True
         else:
-            state.console.print(f"[red]Agent not found: {agent_id}[/red]")
+            removed_folder = False
+
+        if state.active_graph_id == graph_id:
+            state.active_graph_id = ""
+            state.active_assistant_id = ""
+            state.active_thread_id = ""
+            state.agent_editing = False
+            state.agent_messages.clear()
+            state.agent_summary = ""
+
+        if removed_entry or removed_folder:
+            state.console.print(
+                f"[green]Deleted {graph_id}.[/green] "
+                f"[dim](langgraph.json: {'removed' if removed_entry else 'absent'}, "
+                f"folder: {'removed' if removed_folder else 'absent'})[/dim]\n"
+                "[dim]Restart langosh-server to drop the registered graph.[/dim]"
+            )
+        else:
+            state.console.print(f"[red]Nothing found for graph: {graph_id}[/red]")
         return "continue"
 
     if cmd_name == "status":
@@ -318,25 +349,40 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
         return "continue"
 
     if cmd_name == "list":
+        import asyncio
+
         from rich.table import Table
 
-        from ..agents.store import list_agents
+        from ..agents import registry, server_client
 
-        agents = list_agents()
-        if not agents:
-            state.console.print("[dim]No agents found. Use /create to build one.[/dim]")
+        graphs = registry.list_graphs()
+        if not graphs:
+            from ..agents.registry import langgraph_json_path
+            state.console.print(f"[dim]No graphs in {langgraph_json_path()}.[/dim]")
             return "continue"
+
+        # Look up assistants per graph_id (best-effort — server may be down)
+        assistants_by_graph: dict[str, list[str]] = {}
+        try:
+            for a in asyncio.run(server_client.list_assistants(limit=100)):
+                assistants_by_graph.setdefault(a.get("graph_id", ""), []).append(a.get("assistant_id", "")[:8])
+            server_ok = True
+        except Exception:
+            server_ok = False
 
         table = Table(show_header=True, header_style="bold", padding=(0, 1))
         table.add_column("#", justify="right", style="dim")
-        table.add_column("Name")
-        table.add_column("Description")
-        table.add_column("ID", style="dim")
+        table.add_column("Graph ID")
+        table.add_column("Module")
+        table.add_column("Assistants" if server_ok else "Assistants (offline)", style="dim")
 
-        for i, a in enumerate(agents, 1):
-            table.add_row(str(i), a.get("name", ""), a.get("description", "")[:60], a.get("agent_id", ""))
+        for i, (gid, mod) in enumerate(graphs.items(), 1):
+            assistants = ", ".join(assistants_by_graph.get(gid, []))
+            table.add_row(str(i), gid, mod, assistants or "—")
 
         state.console.print(table)
+        if not server_ok:
+            state.console.print("[dim]Server unreachable; assistant column omitted.[/dim]")
         return "continue"
 
     if cmd_name in ("plan", "auto", "edit"):
@@ -435,13 +481,25 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             state.code_summary = ""
             clear_history("code")
             state.console.print("[dim]Code history cleared.[/dim]")
-        elif state.current_mode == "agents" and state.active_agent_id:
-            from ..agents.editor import clear_agent_history
+        elif state.current_mode == "agents" and state.active_graph_id:
+            import asyncio
 
+            from ..agents import server_client
+
+            old_thread = state.active_thread_id
+            try:
+                if old_thread:
+                    asyncio.run(server_client.delete_thread(old_thread))
+                new_thread = asyncio.run(server_client.create_thread())
+                state.active_thread_id = new_thread["thread_id"]
+            except Exception as e:
+                state.console.print(f"[bold red]Error resetting thread:[/bold red] {e}")
+                return "continue"
             state.agent_messages.clear()
             state.agent_summary = ""
-            clear_agent_history(state.active_agent_id)
-            state.console.print("[dim]Agent conversation cleared.[/dim]")
+            state.console.print(
+                f"[dim]Thread reset (was {old_thread[:8]}, now {state.active_thread_id[:8]}).[/dim]"
+            )
         else:
             state.console.print("[dim]Nothing to clear.[/dim]")
         return "continue"

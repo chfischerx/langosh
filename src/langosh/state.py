@@ -24,10 +24,12 @@ code_messages: list[dict] = []
 chat_summary: str = ""
 code_summary: str = ""
 
-# Agent editing state
-active_agent_id: str = ""
-agent_sub_mode: str = "auto"  # plan, auto, edit
-agent_messages: list[dict] = []
+# Agent editing state — backed by langosh-agents repo + langosh-server
+active_graph_id: str = ""        # which graph_id from langgraph.json is selected
+active_assistant_id: str = ""    # server-side assistant attached to the selected graph
+active_thread_id: str = ""       # server-side thread for multi-turn /test runs
+agent_sub_mode: str = "auto"     # plan, auto, edit
+agent_messages: list[dict] = []  # local rendering of the active thread's conversation
 agent_summary: str = ""
 agent_editing: bool = False
 
