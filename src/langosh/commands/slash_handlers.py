@@ -566,8 +566,11 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             mod = importlib.import_module(f"graphs.{graph_id}")
             local_graph = getattr(mod, "graph", None)
             if local_graph is not None:
+                # Compile if needed — exported graph may be an uncompiled StateGraph
+                from langgraph.graph import StateGraph
+                compiled = local_graph.compile() if isinstance(local_graph, StateGraph) else local_graph
                 state.console.print(f"\n[bold]Graph: {graph_id}[/bold]\n")
-                state.console.print(local_graph.get_graph().draw_ascii())
+                state.console.print(compiled.get_graph().draw_ascii())
                 return "continue"
         except Exception as e:
             state.console.print(f"[dim]Local import failed ({e}); fetching from server...[/dim]")
