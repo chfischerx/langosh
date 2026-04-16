@@ -44,17 +44,40 @@ async def list_assistants(limit: int = 50) -> list[dict]:
 
 
 async def ensure_assistant(graph_id: str, *, name: str | None = None) -> dict:
-    """Return an existing assistant for this graph_id, or create one."""
+    """Return an existing assistant for this graph_id, or create one.
+
+    When creating, reads default context values from the graph's
+    definition.json so the assistant starts with sensible defaults.
+    """
     client = _client()
     matches = await client.assistants.search(graph_id=graph_id, limit=10)
     matches = list(matches)
     if matches:
         return matches[0]
-    return await client.assistants.create(
-        graph_id=graph_id,
-        name=name or graph_id,
-        if_exists="do_nothing",
-    )
+
+    # Read default context from definition.json if available
+    context: dict[str, Any] | None = None
+    try:
+        from .registry import graph_dir
+
+        defn_path = graph_dir(graph_id) / "definition.json"
+        if defn_path.is_file():
+            import json
+
+            defn = json.loads(defn_path.read_text())
+            ctx_schema = defn.get("context", {})
+            if ctx_schema:
+                context = {k: v.get("default") for k, v in ctx_schema.items() if "default" in v}
+    except Exception:
+        pass  # Non-fatal — create without context
+
+    kwargs: dict[str, Any] = {
+        "name": name or graph_id,
+        "if_exists": "do_nothing",
+    }
+    if context:
+        kwargs["context"] = context
+    return await client.assistants.create(graph_id=graph_id, **kwargs)
 
 
 async def create_assistant(

@@ -289,7 +289,7 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             state.console.print(f"[bold red]Error creating agent:[/bold red] {e}")
         return "continue"
 
-    if cmd_name == "test":
+    if cmd_name in ("run", "test"):
         import asyncio
         import questionary
 

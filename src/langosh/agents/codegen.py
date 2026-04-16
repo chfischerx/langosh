@@ -152,11 +152,14 @@ def _compile_simple_source(definition: dict, graph_id: str) -> str:
         if imports_block:
             import_lines.append(imports_block)
 
+        model_default = context.get("model_name", {}).get("default", DEFAULT_MODEL)
+        prompt_default = safe_prompt
+
         agent_fn = (
             f"async def agent(state: State, runtime: Runtime[ContextSchema]) -> dict:\n"
-            f"    model = init_chat_model(runtime.context.model_name)\n"
+            f"    model = init_chat_model(getattr(runtime.context, 'model_name', {model_default!r}))\n"
             f"    bound = model.bind_tools({tools_arg})\n"
-            f"    system = SystemMessage(content=runtime.context.system_prompt)\n"
+            f"    system = SystemMessage(content=getattr(runtime.context, 'system_prompt', _DEFAULT_PROMPT))\n"
             f'    response = await bound.ainvoke([system] + state["messages"])\n'
             f'    return {{"messages": [response]}}\n'
         )
@@ -167,7 +170,8 @@ def _compile_simple_source(definition: dict, graph_id: str) -> str:
             f"{header}\n"
             + "\n".join(import_lines) + "\n"
             + f"\n\n{ctx_src}\n"
-            + f"\n{state_class}\n"
+            + f'_DEFAULT_PROMPT = """{safe_prompt}"""\n'
+            + f"\n\n{state_class}\n"
             + f"\n{agent_fn}\n"
             + f"\n{should_continue_fn}\n"
             + f"\n{builder_line}"
@@ -363,7 +367,7 @@ def _emit_tool_node(node: dict, has_context: bool = False) -> str:
     for param, value in args_from_state.items():
         kwargs.append(f"{param}=state[{value!r}]")
     for param, value in args_from_context.items():
-        kwargs.append(f"{param}=runtime.context.{value}")
+        kwargs.append(f"{param}=getattr(runtime.context, {value!r}, None)")
     for param, value in args.items():
         kwargs.append(f"{param}={value!r}")
 
@@ -412,7 +416,7 @@ def _emit_llm_node(node: dict, has_context: bool = False) -> tuple[str, str]:
     module_level = ""
     # Context-aware nodes receive runtime for model/prompt resolution
     sig_extra = ", runtime: Runtime[ContextSchema]" if has_context else ""
-    model_expr = "init_chat_model(runtime.context.model_name)" if has_context else "init_chat_model(DEFAULT_MODEL)"
+    model_expr = "init_chat_model(getattr(runtime.context, 'model_name', DEFAULT_MODEL))" if has_context else "init_chat_model(DEFAULT_MODEL)"
 
     if tool_names:
         # LLM node with tools → ReAct sub-agent
@@ -562,8 +566,8 @@ def _compile_custom_source(
     if has_context:
         ctx_src, ctx_imports = _emit_context_schema(context)
 
-    # Model (only needed when no context — context-aware graphs resolve model at runtime)
-    os_import, default_line = ("", "") if has_context else _model_lines(pinned_model)
+    # Model — always emit DEFAULT_MODEL as a fallback for getattr defaults
+    os_import, default_line = _model_lines(pinned_model)
 
     # Core imports
     core_imports = ["from langgraph.graph import END, START, StateGraph"]
@@ -651,9 +655,8 @@ def _compile_custom_source(
     import_lines.extend(func_imports)
     sections.append("\n".join(import_lines))
 
-    # Default model
-    if not has_context:
-        sections.append(default_line)
+    # Default model (always emitted as fallback for getattr defaults)
+    sections.append(default_line)
 
     # Context schema
     if ctx_src:

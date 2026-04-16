@@ -18,7 +18,7 @@ AGENTS_COMMANDS_MENU = [
 
 # Agents mode — graph selected
 AGENTS_GRAPH_COMMANDS_MENU = [
-    ("/test", "Run on the server (--context key=val for overrides)"),
+    ("/run", "Run on the server (--context key=val for overrides)"),
     ("/edit", "Edit selected graph (LLM conversation; regen on save)"),
     ("/compile", "Regenerate __init__.py from definition.json"),
     ("/assistants", "List assistants for the selected graph"),
@@ -72,7 +72,7 @@ CODE_COMMANDS_MENU = [
 AGENT_EDIT_COMMANDS_MENU = [
     ("/plan", "Approve every tool call"),
     ("/auto", "Auto-approve reads, approve writes"),
-    ("/test", "Run the graph in the active thread"),
+    ("/run", "Run the graph in the active thread"),
     ("/debug", "Inspect last LLM request/response"),
     ("/cls", "Clear screen"),
     ("/clc", "Reset the active thread"),
