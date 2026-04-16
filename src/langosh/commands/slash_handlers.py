@@ -750,6 +750,73 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             state.console.print(f"[green]{result.stdout.strip()}[/green]")
         return "continue"
 
+    if cmd_name == "deploy":
+        import asyncio
+        import subprocess
+        from datetime import datetime
+
+        from ..agents import server_client
+        from ..settings import get_agents_path
+
+        agents_path = str(get_agents_path())
+
+        # 1. Check for uncommitted changes
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=agents_path,
+            capture_output=True, text=True,
+        )
+        if status.stdout.strip():
+            # Stage and commit
+            subprocess.run(["git", "add", "-A"], cwd=agents_path, capture_output=True)
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+            result = subprocess.run(
+                ["git", "commit", "-m", f"Deploy: {ts}"],
+                cwd=agents_path, capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                state.console.print(f"[green]Committed.[/green] [dim]{result.stdout.strip().splitlines()[-1]}[/dim]")
+            else:
+                state.console.print(f"[red]Commit failed:[/red] [dim]{result.stderr.strip()}[/dim]")
+                return "continue"
+        else:
+            state.console.print("[dim]No uncommitted changes.[/dim]")
+
+        # 2. Push
+        push = subprocess.run(
+            ["git", "push"], cwd=agents_path, capture_output=True, text=True,
+        )
+        if push.returncode == 0:
+            out = push.stderr.strip() or push.stdout.strip()  # git push writes to stderr
+            if "Everything up-to-date" in out:
+                state.console.print("[dim]Already up to date with remote.[/dim]")
+            else:
+                state.console.print(f"[green]Pushed.[/green]")
+        else:
+            state.console.print(f"[yellow]Push failed:[/yellow] [dim]{push.stderr.strip()}[/dim]")
+
+        # 3. Reload agents on server
+        try:
+            result = asyncio.run(server_client.reload_agents())
+            state.console.print("[green]Server reloaded.[/green]")
+            if isinstance(result, dict):
+                sha = result.get("sha", "")[:7]
+                prev = result.get("prev_sha", "")[:7]
+                if sha and prev:
+                    state.console.print(f"  [dim]{prev} → {sha}[/dim]")
+                commits = result.get("commits", [])
+                for c in commits:
+                    csha = c.get("sha", "")[:7]
+                    msg = c.get("message", "")
+                    author = c.get("author", "")
+                    state.console.print(f"  [cyan]{csha}[/cyan] {msg} [dim]({author})[/dim]")
+                graphs = result.get("graphs", [])
+                if graphs:
+                    state.console.print(f"  [dim]Graphs: {', '.join(graphs)}[/dim]")
+        except Exception as e:
+            state.console.print(f"[yellow]Reload failed:[/yellow] [dim]{e}[/dim]")
+
+        return "continue"
+
     if cmd_name == "list":
         import asyncio
 
@@ -943,8 +1010,19 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             result = asyncio.run(server_client.reload_agents())
             state.console.print("[green]Agents reloaded on server.[/green]")
             if isinstance(result, dict):
-                for k, v in result.items():
-                    state.console.print(f"  [dim]{k}: {v}[/dim]")
+                sha = result.get("sha", "")[:7]
+                prev = result.get("prev_sha", "")[:7]
+                if sha and prev:
+                    state.console.print(f"  [dim]{prev} → {sha}[/dim]")
+                commits = result.get("commits", [])
+                for c in commits:
+                    csha = c.get("sha", "")[:7]
+                    msg = c.get("message", "")
+                    author = c.get("author", "")
+                    state.console.print(f"  [cyan]{csha}[/cyan] {msg} [dim]({author})[/dim]")
+                graphs = result.get("graphs", [])
+                if graphs:
+                    state.console.print(f"  [dim]Graphs: {', '.join(graphs)}[/dim]")
         except Exception as e:
             state.console.print(f"[bold red]Error:[/bold red] {e}")
         return "continue"
