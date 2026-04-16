@@ -1306,52 +1306,89 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
         import questionary
 
         from ..agents import server_client
-        from ..settings import DEFAULT_SERVER_URL, get_api_key, get_server_url
+        from ..settings import get as get_setting
         from ..settings import set as set_setting
+        from ..settings import delete as del_setting
+        from ..settings import get_server_url
 
-        url = get_server_url()
-        api_key = get_api_key()
+        # Schema: (key, label, default, type)
+        _SETTINGS_SCHEMA = [
+            ("server_url", "Server URL", "http://localhost:8001", "str"),
+            ("api_key", "Server API key", "", "str"),
+            ("anthropic_api_key", "Anthropic API key", "", "str"),
+            ("openai_api_key", "OpenAI API key", "", "str"),
+            ("default_provider", "Default LLM provider", "anthropic", "str"),
+            ("default_model", "Default model ID", "", "str"),
+            ("aws_bedrock_region", "AWS Bedrock region", "us-east-1", "str"),
+            ("max_tokens", "Max tokens per response", "4096", "int"),
+            ("max_tool_turns", "Max tool call rounds", "10", "int"),
+        ]
+
+        # Show server reachability
         try:
             ok = asyncio.run(server_client.health_check())
         except Exception:
             ok = False
         status = "[green]reachable[/green]" if ok else "[red]unreachable[/red]"
+        state.console.print(f"  [dim]Server: {get_server_url()} ({status})[/dim]\n")
 
-        state.console.print(f"  [bold]server_url[/bold] [dim]({status})[/dim]: {url}")
-        state.console.print(f"  [bold]api_key[/bold]:    {'***' + api_key[-4:] if api_key and len(api_key) > 4 else api_key or '[not set]'}")
-
-        choices = [
-            questionary.Choice(title="← Back", value=None),
-            questionary.Choice(title="Set server URL", value="url"),
-            questionary.Choice(title="Set API key", value="key"),
-        ]
-        if api_key:
-            choices.append(questionary.Choice(title="Clear API key", value="clear_key"))
-
-        action = questionary.select("Setting:", choices=choices).ask()
-        if not action:
-            return "continue"
-
-        if action == "url":
-            new_url = questionary.text("Server URL:", default=url).ask()
-            if new_url and new_url.strip():
-                new_url = new_url.strip()
-                if not (new_url.startswith("http://") or new_url.startswith("https://")):
-                    state.console.print("[bold red]Invalid URL[/bold red] (must start with http:// or https://)")
+        while True:
+            choices = [questionary.Choice(title="← Back", value=None)]
+            for key, label, default, _ in _SETTINGS_SCHEMA:
+                val = get_setting(key)
+                if val is not None:
+                    disp = str(val)
                 else:
-                    set_setting("server_url", new_url)
-                    state.console.print(f"[green]Set server_url to {new_url}[/green]")
+                    disp = f"[default: {default}]" if default else "[not set]"
+                choices.append(questionary.Choice(
+                    title=f"{label:30} {disp}",
+                    value=key,
+                ))
 
-        elif action == "key":
-            new_key = questionary.password("API key:").ask()
-            if new_key and new_key.strip():
-                set_setting("api_key", new_key.strip())
-                state.console.print("[green]API key saved.[/green]")
+            picked = questionary.select("Setting:", choices=choices).ask()
+            if not picked:
+                return "continue"
 
-        elif action == "clear_key":
-            from ..settings import delete as del_setting
-            del_setting("api_key")
-            state.console.print("[green]API key cleared.[/green]")
+            # Find schema entry
+            schema = next(s for s in _SETTINGS_SCHEMA if s[0] == picked)
+            key, label, default, stype = schema
+            cur = get_setting(key)
+
+            state.console.print(f"  [dim]{label}[/dim]")
+
+            actions = ["Set value"]
+            if cur is not None:
+                actions.append("Clear (revert to default)")
+            actions.append("← Back")
+            action = questionary.select("Action:", choices=actions).ask()
+
+            if not action or action == "← Back":
+                continue
+
+            if action.startswith("Clear"):
+                del_setting(key)
+                state.console.print(f"[green]Cleared {key}.[/green]")
+                continue
+
+            prompt_default = str(cur) if cur is not None else default
+            value = questionary.text(f"{key}:", default=prompt_default).ask()
+            if value is None:
+                continue
+
+            value = value.strip()
+            if not value:
+                continue
+
+            # Type coercion
+            if stype == "int":
+                try:
+                    set_setting(key, int(value))
+                except ValueError:
+                    state.console.print("[bold red]Must be a number.[/bold red]")
+                    continue
+            else:
+                set_setting(key, value)
+            state.console.print(f"[green]Set {key}.[/green]")
 
         return "continue"
 

@@ -29,7 +29,7 @@ def register(app: typer.Typer) -> None:
         from rich.table import Table
 
         if not state.model_cache:
-            state.console.print("[yellow]No models found.[/yellow] Check that API keys are configured in .env")
+            state.console.print("[yellow]No models found.[/yellow] Check that API keys are configured in /admin /settings")
             return
 
         if query and query in state.model_cache:
