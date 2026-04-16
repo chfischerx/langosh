@@ -54,10 +54,10 @@ _style = PtStyle.from_dict({
     "separator": "fg:ansidarkgray",
     "mode-label": "bold fg:ansibrightcyan",
     "prompt": "bold fg:ansibrightcyan",
-    "completion-menu": "bg:ansibrightblack fg:ansiwhite",
-    "completion-menu.completion.current": "bg:ansibrightcyan fg:ansiblack",
-    "completion-menu.meta.completion": "bg:ansibrightblack fg:ansidarkgray",
-    "completion-menu.meta.completion.current": "bg:ansibrightcyan fg:ansiblack",
+    "completion-menu": "bg:#1a1a2e fg:#8888aa",
+    "completion-menu.completion.current": "bg:#e2e2e2 fg:#000000 bold",
+    "completion-menu.meta.completion": "bg:#1a1a2e fg:#555577",
+    "completion-menu.meta.completion.current": "bg:#e2e2e2 fg:#333333",
 })
 
 

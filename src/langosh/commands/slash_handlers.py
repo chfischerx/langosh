@@ -382,9 +382,14 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
         for a in assistants:
             name = a.get("name", "unnamed")
             aid = a["assistant_id"][:8]
+            version = a.get("version", "")
+            desc = a.get("description") or ""
             ctx = a.get("context") or a.get("config", {}).get("configurable", {})
             active = " [bold green]← active[/bold green]" if a["assistant_id"] == state.active_assistant_id else ""
-            state.console.print(f"  [cyan]{name}[/cyan] ({aid}){active}")
+            ver = f" v{version}" if version else ""
+            state.console.print(f"  [cyan]{name}[/cyan] ({aid}{ver}){active}")
+            if desc:
+                state.console.print(f"    [dim]{desc}[/dim]")
             if ctx:
                 for k, v in ctx.items():
                     state.console.print(f"    {k}: {v}")
@@ -528,18 +533,38 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
                 state.console.print(f"[bold red]Error:[/bold red] {e}")
 
         elif sub_cmd == "delete":
-            if not state.active_assistant_id:
-                state.console.print("[red]No assistant active.[/red]")
+            try:
+                assistants = asyncio.run(server_client.list_graph_assistants(state.active_graph_id))
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
                 return "continue"
+
+            if not assistants:
+                state.console.print("[dim]No assistants for this graph.[/dim]")
+                return "continue"
+
+            choices = [
+                questionary.Choice(
+                    title=f"{a.get('name', a['assistant_id'])} ({a['assistant_id'][:8]})",
+                    value=a,
+                )
+                for a in assistants
+            ]
+            picked = questionary.select("Delete which assistant?", choices=choices).ask()
+            if not picked:
+                state.console.print("[dim]Cancelled.[/dim]")
+                return "continue"
+
             confirm = questionary.confirm(
-                f"Delete assistant {state.active_assistant_id[:8]}?", default=False
+                f"Delete '{picked.get('name', picked['assistant_id'])}'?", default=False
             ).ask()
             if confirm:
                 try:
-                    asyncio.run(server_client.delete_assistant(state.active_assistant_id))
+                    asyncio.run(server_client.delete_assistant(picked["assistant_id"]))
                     state.console.print("[green]Assistant deleted.[/green]")
-                    state.active_assistant_id = ""
-                    state.active_thread_id = ""
+                    if state.active_assistant_id == picked["assistant_id"]:
+                        state.active_assistant_id = ""
+                        state.active_thread_id = ""
                 except Exception as e:
                     state.console.print(f"[bold red]Error:[/bold red] {e}")
 
@@ -981,6 +1006,174 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             )
         else:
             state.console.print("[dim]Nothing to clear.[/dim]")
+        return "continue"
+
+    # ── thread commands (graph selected) ──────────────────────────────────
+
+    if cmd_name == "threads" and state.current_mode == "main" and state.active_graph_id:
+        import asyncio
+
+        import questionary
+
+        from ..agents import server_client
+
+        try:
+            threads = asyncio.run(server_client.search_threads(limit=20))
+        except Exception as e:
+            state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        if not threads:
+            state.console.print("[dim]No threads found.[/dim]")
+            return "continue"
+
+        # Build choices with preview
+        choices = []
+        for t in threads:
+            tid = t["thread_id"][:8]
+            status = t.get("status", "?")
+            updated = t.get("updated_at", "")[:16].replace("T", " ")
+            active = " *" if t["thread_id"] == state.active_thread_id else ""
+            label = f"{tid}  {status:12} {updated}{active}"
+            choices.append(questionary.Choice(title=label, value=t))
+        choices.insert(0, questionary.Choice(title="← Back", value=None))
+
+        picked = questionary.select("Switch to thread:", choices=choices).ask()
+        if not picked:
+            return "continue"
+
+        # Switch to selected thread
+        state.active_thread_id = picked["thread_id"]
+        state.agent_messages.clear()
+
+        # Load conversation from thread state
+        try:
+            ts = asyncio.run(server_client.get_thread_state(state.active_thread_id))
+            messages = (ts.get("values") or {}).get("messages", [])
+            for msg in messages:
+                kwargs = msg.get("kwargs", msg)
+                role = kwargs.get("type", "")
+                content = kwargs.get("content", "")
+                if isinstance(content, list):
+                    content = "".join(
+                        b.get("text", "") for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+                if role in ("human", "HumanMessage"):
+                    state.agent_messages.append({"role": "user", "content": content})
+                elif role in ("ai", "AIMessage", "AIMessageChunk"):
+                    state.agent_messages.append({"role": "assistant", "content": content})
+        except Exception:
+            pass  # Non-fatal — thread might be empty
+
+        state.console.print(
+            f"[green]Switched to thread {state.active_thread_id[:8]}[/green] "
+            f"[dim]({len(state.agent_messages)} messages)[/dim]"
+        )
+        return "continue"
+
+    if cmd_name == "thread" and state.current_mode == "main" and state.active_graph_id:
+        import asyncio
+
+        from ..agents import server_client
+
+        sub = parts[1].strip().lower() if len(parts) > 1 else ""
+
+        if sub == "new":
+            # Start a fresh thread without deleting the old one
+            try:
+                new_thread = asyncio.run(server_client.create_thread())
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
+                return "continue"
+            old = state.active_thread_id[:8]
+            state.active_thread_id = new_thread["thread_id"]
+            state.agent_messages.clear()
+            state.agent_summary = ""
+            state.console.print(
+                f"[green]New thread {state.active_thread_id[:8]}[/green] "
+                f"[dim](previous: {old})[/dim]"
+            )
+            return "continue"
+
+        if sub == "delete":
+            import questionary
+
+            try:
+                threads = asyncio.run(server_client.search_threads(limit=20))
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
+                return "continue"
+
+            if not threads:
+                state.console.print("[dim]No threads.[/dim]")
+                return "continue"
+
+            choices = []
+            for t in threads:
+                tid = t["thread_id"][:8]
+                updated = t.get("updated_at", "")[:16].replace("T", " ")
+                active = " (active)" if t["thread_id"] == state.active_thread_id else ""
+                choices.append(questionary.Choice(title=f"{tid}  {updated}{active}", value=t))
+            choices.insert(0, questionary.Choice(title="← Back", value=None))
+
+            picked = questionary.select("Delete which thread?", choices=choices).ask()
+            if not picked:
+                return "continue"
+
+            confirm = questionary.confirm(f"Delete thread {picked['thread_id'][:8]}?", default=False).ask()
+            if confirm:
+                try:
+                    asyncio.run(server_client.delete_thread(picked["thread_id"]))
+                    state.console.print(f"[green]Deleted thread {picked['thread_id'][:8]}.[/green]")
+                    if picked["thread_id"] == state.active_thread_id:
+                        new = asyncio.run(server_client.create_thread())
+                        state.active_thread_id = new["thread_id"]
+                        state.agent_messages.clear()
+                        state.console.print(f"[dim]New active thread: {state.active_thread_id[:8]}[/dim]")
+                except Exception as e:
+                    state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        # Default: show current thread info + conversation
+        if not state.active_thread_id:
+            state.console.print("[dim]No active thread. Use /run first.[/dim]")
+            return "continue"
+
+        try:
+            thread = asyncio.run(server_client.get_thread(state.active_thread_id))
+            ts = asyncio.run(server_client.get_thread_state(state.active_thread_id))
+        except Exception as e:
+            state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        state.console.print(f"  [bold]Thread[/bold]   {thread['thread_id'][:8]}")
+        state.console.print(f"  [bold]Status[/bold]   {thread.get('status', '?')}")
+        state.console.print(f"  [bold]Created[/bold]  {thread.get('created_at', '')[:16].replace('T', ' ')}")
+        state.console.print(f"  [bold]Updated[/bold]  {thread.get('updated_at', '')[:16].replace('T', ' ')}")
+
+        messages = (ts.get("values") or {}).get("messages", [])
+        if messages:
+            state.console.print(f"\n  [bold]Conversation[/bold] ({len(messages)} messages)\n")
+            for msg in messages:
+                kwargs = msg.get("kwargs", msg)
+                role = kwargs.get("type", "")
+                content = kwargs.get("content", "")
+                if isinstance(content, list):
+                    content = "".join(
+                        b.get("text", "") for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+                if role in ("human", "HumanMessage"):
+                    state.console.print(f"  [bold]>[/bold] {content}")
+                elif role in ("ai", "AIMessage", "AIMessageChunk"):
+                    # Show first 200 chars of AI response
+                    preview = content[:200] + ("..." if len(content) > 200 else "")
+                    state.console.print(f"  [dim]{preview}[/dim]")
+                state.console.print()
+        else:
+            state.console.print("\n  [dim]No messages yet.[/dim]")
+
         return "continue"
 
     # ── admin mode commands ────────────────────────────────────────────────

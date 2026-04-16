@@ -84,11 +84,22 @@ async def create_assistant(
     graph_id: str, name: str, *, context: dict | None = None
 ) -> dict:
     """Create a new custom assistant for a graph with optional context."""
+    import re
+
     client = _client()
-    kwargs: dict[str, Any] = {"name": name}
+    # Derive a unique assistant_id from graph_id + name so multiple
+    # assistants can coexist for the same graph.
+    slug = re.sub(r"[^\w]+", "_", name.lower()).strip("_")
+    assistant_id = f"{graph_id}_{slug}"
+    kwargs: dict[str, Any] = {"name": name, "assistant_id": assistant_id}
     if context:
         kwargs["context"] = context
     return await client.assistants.create(graph_id, **kwargs)
+
+
+async def get_assistant(assistant_id: str) -> dict:
+    """GET /assistants/{assistant_id} — full assistant details."""
+    return await _client().assistants.get(assistant_id)
 
 
 async def list_graph_assistants(graph_id: str) -> list[dict]:
@@ -97,20 +108,26 @@ async def list_graph_assistants(graph_id: str) -> list[dict]:
 
 
 async def update_assistant(
-    assistant_id: str, *, context: dict | None = None, name: str | None = None
+    assistant_id: str,
+    *,
+    context: dict | None = None,
+    name: str | None = None,
+    description: str | None = None,
 ) -> dict:
-    """Update an assistant's context/name (creates a new version)."""
+    """PATCH /assistants/{id} — update context, name, or description."""
     client = _client()
     kwargs: dict[str, Any] = {}
     if context is not None:
         kwargs["context"] = context
     if name is not None:
         kwargs["name"] = name
+    if description is not None:
+        kwargs["description"] = description
     return await client.assistants.update(assistant_id, **kwargs)
 
 
 async def delete_assistant(assistant_id: str) -> None:
-    """Delete an assistant and all its versions."""
+    """DELETE /assistants/{assistant_id}."""
     await _client().assistants.delete(assistant_id)
 
 
@@ -119,14 +136,39 @@ async def get_assistant_graph(assistant_id: str) -> dict:
     return await _client().assistants.get_graph(assistant_id)
 
 
+async def get_assistant_schemas(assistant_id: str) -> dict:
+    """GET /assistants/{assistant_id}/schemas — input/output/context schemas."""
+    return await _client().assistants.get_schemas(assistant_id)
+
+
 async def create_thread() -> dict:
     """Create a new conversation thread."""
     return await _client().threads.create()
 
 
+async def get_thread(thread_id: str) -> dict:
+    """GET /threads/{thread_id} — thread details."""
+    return await _client().threads.get(thread_id)
+
+
+async def search_threads(limit: int = 20) -> list[dict]:
+    """POST /threads/search — list recent threads."""
+    return list(await _client().threads.search(limit=limit))
+
+
 async def delete_thread(thread_id: str) -> None:
     """Delete a thread and its checkpoints."""
     await _client().threads.delete(thread_id)
+
+
+async def get_thread_state(thread_id: str) -> dict:
+    """GET /threads/{thread_id}/state — current state (messages, etc.)."""
+    return await _client().threads.get_state(thread_id)
+
+
+async def get_thread_history(thread_id: str, limit: int = 10) -> list[dict]:
+    """POST /threads/{thread_id}/history — checkpoint history."""
+    return list(await _client().threads.get_history(thread_id, limit=limit))
 
 
 async def stream_run(
