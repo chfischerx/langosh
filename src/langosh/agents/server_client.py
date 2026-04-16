@@ -270,6 +270,53 @@ async def stream_run(
     return {"text": "".join(text_chunks), "run_id": run_id}
 
 
+async def wait_run(
+    assistant_id: str,
+    thread_id: str | None,
+    messages: list[dict],
+    *,
+    context: dict | None = None,
+) -> dict:
+    """Non-streaming run; block until complete; return final output.
+
+    Works with a thread (conversational) or thread_id=None (stateless).
+    Returns {"text": <assistant text>}.
+    """
+    client = _client(timeout=120.0)
+    kwargs: dict[str, Any] = {
+        "input": {"messages": messages},
+    }
+    if context:
+        kwargs["context"] = context
+
+    result = await client.runs.wait(thread_id, assistant_id, **kwargs)
+
+    # Extract text from the final state
+    text = ""
+    if isinstance(result, dict):
+        msgs = result.get("messages", [])
+        for msg in reversed(msgs):
+            kw = msg.get("kwargs", msg)
+            msg_type = kw.get("type", "")
+            if msg_type in ("ai", "AIMessage", "AIMessageChunk"):
+                content = kw.get("content", "")
+                if isinstance(content, str):
+                    text = content
+                elif isinstance(content, list):
+                    text = "".join(
+                        b.get("text", "") for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+                break
+
+    return {"text": text}
+
+
+async def list_runs(thread_id: str, limit: int = 10) -> list[dict]:
+    """List recent runs for a thread."""
+    return list(await _client().runs.list(thread_id, limit=limit))
+
+
 # ── admin / server info endpoints ────────────────────────────────────────────
 
 

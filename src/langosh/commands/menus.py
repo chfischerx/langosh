@@ -18,7 +18,11 @@ AGENTS_COMMANDS_MENU = [
 
 # Agents mode — graph selected
 AGENTS_GRAPH_COMMANDS_MENU = [
-    ("/run", "Run on the server (--context key=val for overrides)"),
+    ("/run", "Run on the server (streaming, in thread)"),
+    ("/runwait", "Run and wait for result (no streaming, in thread)"),
+    ("/runsl", "Stateless run (streaming, no thread history)"),
+    ("/runslwait", "Stateless run and wait (no streaming, no thread)"),
+    ("/runs", "List recent runs for the active thread"),
     ("/edit", "Edit selected graph (LLM conversation; regen on save)"),
     ("/compile", "Regenerate __init__.py from definition.json"),
     ("/assistants", "List assistants for the selected graph"),

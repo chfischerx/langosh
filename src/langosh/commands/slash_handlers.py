@@ -360,6 +360,165 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
         state.console.print(f"\n[dim]turn {turns} | run {result.get('run_id', '?')[:8]}[/dim]")
         return "continue"
 
+    if cmd_name == "runwait":
+        import asyncio
+        import questionary
+
+        from ..agents import server_client
+
+        if not state.active_graph_id or not state.active_assistant_id or not state.active_thread_id:
+            state.console.print("[red]No graph selected. Use /select first.[/red]")
+            return "continue"
+
+        rest = parts[1].strip() if len(parts) > 1 else ""
+        if not rest:
+            rest = questionary.text("Message:").ask()
+            if not rest or not rest.strip():
+                state.console.print("[dim]Cancelled.[/dim]")
+                return "continue"
+        msg = rest.strip()
+
+        state.agent_messages.append({"role": "user", "content": msg})
+        state.console.print(f"\n[dim]Running (wait) on thread {state.active_thread_id[:8]}...[/dim]")
+        try:
+            with state.console.status("[dim]Waiting for response...[/dim]"):
+                result = asyncio.run(
+                    server_client.wait_run(
+                        assistant_id=state.active_assistant_id,
+                        thread_id=state.active_thread_id,
+                        messages=[{"role": "user", "content": msg}],
+                    )
+                )
+        except KeyboardInterrupt:
+            state.agent_messages.pop()
+            state.console.print("\n[yellow]Interrupted.[/yellow]")
+            return "continue"
+        except Exception as e:
+            state.agent_messages.pop()
+            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        text = result.get("text", "")
+        state.agent_messages.append({"role": "assistant", "content": text})
+        state.console.print(f"\n{text}")
+        turns = len([m for m in state.agent_messages if m["role"] == "user"])
+        state.console.print(f"\n[dim]turn {turns}[/dim]")
+        return "continue"
+
+    if cmd_name == "runsl":
+        import asyncio
+        import questionary
+
+        from ..agents import server_client
+
+        if not state.active_graph_id or not state.active_assistant_id:
+            state.console.print("[red]No graph selected. Use /select first.[/red]")
+            return "continue"
+
+        rest = parts[1].strip() if len(parts) > 1 else ""
+        if not rest:
+            rest = questionary.text("Message:").ask()
+            if not rest or not rest.strip():
+                state.console.print("[dim]Cancelled.[/dim]")
+                return "continue"
+        msg = rest.strip()
+
+        async def _on_event(event_type: str, data: dict) -> None:
+            if event_type == "token":
+                state.console.print(data.get("text", ""), end="", soft_wrap=True, highlight=False)
+            elif event_type == "tool_call":
+                state.console.print(f"\n[dim]  ↳ calling {data.get('name', '?')}...[/dim]")
+            elif event_type == "tool_result":
+                preview = data.get("preview", "")[:80]
+                state.console.print(f"[dim]  ↳ done ({preview})[/dim]")
+            elif event_type == "error":
+                state.console.print(f"\n[bold red]Error:[/bold red] {data.get('message', '')}")
+
+        state.console.print(f"\n[dim]Stateless run (no thread)...[/dim]\n")
+        try:
+            result = asyncio.run(
+                server_client.stream_run(
+                    assistant_id=state.active_assistant_id,
+                    thread_id=None,
+                    messages=[{"role": "user", "content": msg}],
+                    on_event=_on_event,
+                )
+            )
+        except KeyboardInterrupt:
+            state.console.print("\n[yellow]Interrupted.[/yellow]")
+            return "continue"
+        except Exception as e:
+            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        state.console.print()
+        return "continue"
+
+    if cmd_name == "runslwait":
+        import asyncio
+        import questionary
+
+        from ..agents import server_client
+
+        if not state.active_graph_id or not state.active_assistant_id:
+            state.console.print("[red]No graph selected. Use /select first.[/red]")
+            return "continue"
+
+        rest = parts[1].strip() if len(parts) > 1 else ""
+        if not rest:
+            rest = questionary.text("Message:").ask()
+            if not rest or not rest.strip():
+                state.console.print("[dim]Cancelled.[/dim]")
+                return "continue"
+        msg = rest.strip()
+
+        state.console.print(f"\n[dim]Stateless run (wait, no thread)...[/dim]")
+        try:
+            with state.console.status("[dim]Waiting for response...[/dim]"):
+                result = asyncio.run(
+                    server_client.wait_run(
+                        assistant_id=state.active_assistant_id,
+                        thread_id=None,
+                        messages=[{"role": "user", "content": msg}],
+                    )
+                )
+        except KeyboardInterrupt:
+            state.console.print("\n[yellow]Interrupted.[/yellow]")
+            return "continue"
+        except Exception as e:
+            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        text = result.get("text", "")
+        state.console.print(f"\n{text}\n")
+        return "continue"
+
+    if cmd_name == "runs":
+        import asyncio
+
+        from ..agents import server_client
+
+        if not state.active_thread_id:
+            state.console.print("[dim]No active thread.[/dim]")
+            return "continue"
+
+        try:
+            runs = asyncio.run(server_client.list_runs(state.active_thread_id))
+        except Exception as e:
+            state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        if not runs:
+            state.console.print("[dim]No runs for this thread.[/dim]")
+            return "continue"
+
+        for r in runs:
+            rid = r.get("run_id", "?")[:8]
+            status = r.get("status", "?")
+            created = r.get("created_at", "")[:16].replace("T", " ")
+            state.console.print(f"  [cyan]{rid}[/cyan]  {status:12}  {created}")
+        return "continue"
+
     if cmd_name == "assistants":
         import asyncio
 
