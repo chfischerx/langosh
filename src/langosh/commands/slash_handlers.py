@@ -129,7 +129,7 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
                 state.console.print("[dim]No graphs in langgraph.json. Use /create first.[/dim]")
                 return "continue"
             choices = [f"{gid} — {mod}" for gid, mod in graphs.items()]
-            choice = questionary.rawselect("Select graph:", choices=choices).ask()
+            choice = questionary.select("Select graph:", choices=choices).ask()
             if choice is None:
                 state.console.print("[dim]Cancelled.[/dim]")
                 return "continue"
@@ -152,7 +152,7 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
                     ctx = a.get("context") or a.get("config", {}).get("configurable", {})
                     ctx_str = ", ".join(f"{k}={v}" for k, v in ctx.items()) if ctx else "default"
                     choices.append(f"{name} ({aid}) — {ctx_str}")
-                choice = questionary.rawselect("Select assistant:", choices=choices).ask()
+                choice = questionary.select("Select assistant:", choices=choices).ask()
                 if choice is None:
                     state.console.print("[dim]Cancelled.[/dim]")
                     return "continue"
