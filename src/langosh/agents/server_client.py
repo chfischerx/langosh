@@ -319,3 +319,11 @@ async def delete_config(category: str, key: str) -> dict:
         r = await http.delete(f"{_base_url()}/admin/config/{category}/{key}")
         r.raise_for_status()
         return r.json()
+
+
+async def reset_config() -> dict:
+    """POST /admin/config/reset — delete all config keys."""
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+        r = await http.post(f"{_base_url()}/admin/config/reset")
+        r.raise_for_status()
+        return r.json()

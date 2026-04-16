@@ -55,6 +55,7 @@ def register(app: typer.Typer) -> None:
         table.add_column("#", justify="right", style="dim")
         table.add_column("Provider")
         table.add_column("Name")
+        table.add_column("Model ID", style="dim")
 
         active_prov = state.active_model["provider"]
         active_id = state.active_model["model_id"]
@@ -67,7 +68,7 @@ def register(app: typer.Typer) -> None:
                 prov_cell = f"[bold]{prov}[/bold]" if first else ""
                 is_active = m.provider == active_prov and m.id == active_id
                 name = f"[green]{m.name} *[/green]" if is_active else m.name
-                table.add_row(str(num), prov_cell, name)
+                table.add_row(str(num), prov_cell, name, m.id)
                 first = False
 
         state.console.print(table)
@@ -156,10 +157,11 @@ def register(app: typer.Typer) -> None:
         table.add_column("#", justify="right", style="dim")
         table.add_column("Provider")
         table.add_column("Name")
+        table.add_column("Model ID", style="dim")
         table.add_column("Score", justify="right", style="dim")
 
         for num, (score, m) in enumerate(top, 1):
-            table.add_row(str(num), m.provider, m.name, f"{score:.0%}")
+            table.add_row(str(num), m.provider, m.name, m.id, f"{score:.0%}")
 
         state.console.print(table)
 

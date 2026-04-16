@@ -1137,10 +1137,77 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             categories.setdefault(s["category"], []).append(s)
 
         _BACK = "__back__"
+        _WIZARD = "__wizard__"
+        _RESET = "__reset__"
+        _SHOW = "__show__"
 
+        # ── Wizard: step through all params ─────────────────────────────
+        def _run_wizard():
+            changed = 0
+            for cat, params in categories.items():
+                state.console.print(f"\n[bold]{cat}[/bold]")
+                for s in params:
+                    key = s["key"]
+                    cur_val = current_by_key.get(key)
+                    encrypted = s.get("encrypted", False)
+
+                    # Show current state
+                    if cur_val is not None and encrypted:
+                        status = f"{cur_val[:4]}..."
+                    elif cur_val is not None:
+                        status = cur_val
+                    else:
+                        status = "[not set]"
+                    state.console.print(f"  [cyan]{key}[/cyan] = {status}")
+                    state.console.print(f"  [dim]{s['description']}[/dim]")
+
+                    if encrypted:
+                        value = questionary.password(
+                            f"  {key} (Enter to skip):"
+                        ).ask()
+                    else:
+                        value = questionary.text(
+                            f"  {key}:",
+                            default=cur_val or "",
+                        ).ask()
+
+                    if value is None:
+                        state.console.print("[dim]Wizard cancelled.[/dim]")
+                        return changed
+
+                    value = value.strip()
+                    if not value and cur_val is None:
+                        continue  # skip — was not set, still not set
+                    if not value and cur_val is not None:
+                        # Clear existing value
+                        try:
+                            asyncio.run(server_client.delete_config(cat, key))
+                            current_by_key.pop(key, None)
+                            changed += 1
+                            state.console.print(f"  [green]Cleared.[/green]")
+                        except Exception as e:
+                            state.console.print(f"  [bold red]Error:[/bold red] {e}")
+                        continue
+                    if value == cur_val:
+                        continue  # unchanged
+                    try:
+                        asyncio.run(server_client.set_config(cat, key, value))
+                        current_by_key[key] = value
+                        changed += 1
+                        state.console.print(f"  [green]Set.[/green]")
+                    except Exception as e:
+                        state.console.print(f"  [bold red]Error:[/bold red] {e}")
+
+            return changed
+
+        # ── Interactive: pick category → param → action ─────────────────
         while True:
-            # Step 1: pick a category
-            cat_choices = [questionary.Choice(title="← Back", value=_BACK)]
+            cat_choices = [
+                questionary.Choice(title="← Back", value=_BACK),
+                questionary.Choice(title="Show all config", value=_SHOW),
+                questionary.Choice(title="Setup wizard (step through all)", value=_WIZARD),
+                questionary.Choice(title="Reset all config", value=_RESET),
+            ]
             cat_choices += [
                 questionary.Choice(
                     title=f"{cat}  ({len(params)} params)",
@@ -1152,7 +1219,41 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             if not cat or cat == _BACK:
                 return "continue"
 
-            # Step 2: pick a parameter (loop so Back returns to category)
+            if cat == _SHOW:
+                current_cat = ""
+                for s in schema:
+                    if s["category"] != current_cat:
+                        current_cat = s["category"]
+                        state.console.print(f"\n  [bold]{current_cat}[/bold]")
+                    key = s["key"]
+                    val = current_by_key.get(key)
+                    if val is None:
+                        state.console.print(f"    [cyan]{key}[/cyan] [dim][not set][/dim]")
+                    elif s.get("encrypted") and val:
+                        state.console.print(f"    [cyan]{key}[/cyan] = {val[:4]}...")
+                    else:
+                        state.console.print(f"    [cyan]{key}[/cyan] = {val}")
+                state.console.print()
+                continue  # back to menu
+
+            if cat == _WIZARD:
+                n = _run_wizard()
+                state.console.print(f"\n[green]Wizard complete.[/green] [dim]{n} value(s) changed.[/dim]")
+                return "continue"
+
+            if cat == _RESET:
+                confirm = questionary.confirm(
+                    "Reset all config? Values revert to env-var fallbacks.", default=False
+                ).ask()
+                if confirm:
+                    try:
+                        asyncio.run(server_client.reset_config())
+                        current_by_key.clear()
+                        state.console.print("[green]All config values reset.[/green]")
+                    except Exception as e:
+                        state.console.print(f"[bold red]Error:[/bold red] {e}")
+                return "continue"
+
             while True:
                 param_choices = [questionary.Choice(title="← Back", value=_BACK)]
                 for s in categories[cat]:
@@ -1168,13 +1269,12 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
 
                 picked = questionary.select("Parameter:", choices=param_choices).ask()
                 if not picked or picked == _BACK:
-                    break  # back to category selection
+                    break
 
                 key = picked["key"]
                 cur_val = current_by_key.get(key)
                 state.console.print(f"[dim]{picked['description']}[/dim]")
 
-                # Step 3: action
                 actions = ["Set value"]
                 if cur_val is not None:
                     actions.append("Clear value")
@@ -1182,7 +1282,7 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
                 action = questionary.select("Action:", choices=actions).ask()
 
                 if not action or action == "← Back":
-                    continue  # back to parameter selection
+                    continue
 
                 if action == "Clear value":
                     try:
@@ -1193,13 +1293,12 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
                         state.console.print(f"[bold red]Error:[/bold red] {e}")
                     continue
 
-                # Set value — password input for encrypted keys
                 if picked.get("encrypted"):
                     value = questionary.password(f"{key}:").ask()
                 else:
                     value = questionary.text(f"{key}:", default=cur_val or "").ask()
                 if value is None:
-                    continue  # back to parameter selection
+                    continue
 
                 try:
                     asyncio.run(server_client.set_config(picked["category"], key, value))
