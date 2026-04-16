@@ -185,11 +185,10 @@ def get_input() -> str | None:
     def _accept(event):
         if _has_menu(buf):
             buf.complete_state = None
-        else:
-            text = buf.text
-            if text.strip():
-                buf.append_to_history()
-            event.app.exit(result=text)
+        text = buf.text
+        if text.strip():
+            buf.append_to_history()
+        event.app.exit(result=text)
 
     @kb.add("escape")
     def _dismiss(event):

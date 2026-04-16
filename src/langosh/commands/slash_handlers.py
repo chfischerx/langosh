@@ -1140,21 +1140,21 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
 
         while True:
             # Step 1: pick a category
-            cat_choices = [
+            cat_choices = [questionary.Choice(title="← Back", value=_BACK)]
+            cat_choices += [
                 questionary.Choice(
                     title=f"{cat}  ({len(params)} params)",
                     value=cat,
                 )
                 for cat, params in categories.items()
             ]
-            cat_choices.append(questionary.Choice(title="← Back", value=_BACK))
             cat = questionary.select("Category:", choices=cat_choices).ask()
             if not cat or cat == _BACK:
                 return "continue"
 
             # Step 2: pick a parameter (loop so Back returns to category)
             while True:
-                param_choices = []
+                param_choices = [questionary.Choice(title="← Back", value=_BACK)]
                 for s in categories[cat]:
                     k = s["key"]
                     val = current_by_key.get(k)
@@ -1165,7 +1165,6 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
                     else:
                         label = f"{k} = {val}"
                     param_choices.append(questionary.Choice(title=label, value=s))
-                param_choices.append(questionary.Choice(title="← Back", value=_BACK))
 
                 picked = questionary.select("Parameter:", choices=param_choices).ask()
                 if not picked or picked == _BACK:
