@@ -173,3 +173,57 @@ async def stream_run(
             raise RuntimeError(f"Server run failed: {msg}")
 
     return {"text": "".join(text_chunks), "run_id": run_id}
+
+
+# ── admin / server info endpoints ────────────────────────────────────────────
+
+
+def _base_url() -> str:
+    return get_server_url().rstrip("/")
+
+
+async def server_info() -> dict:
+    """GET /info — server version, loaded graphs, etc."""
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+        r = await http.get(f"{_base_url()}/info")
+        r.raise_for_status()
+        return r.json()
+
+
+async def reload_agents() -> dict:
+    """POST /admin/reload — hot-reload graphs without restarting the server."""
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+        r = await http.post(f"{_base_url()}/admin/reload")
+        r.raise_for_status()
+        return r.json()
+
+
+async def list_api_keys() -> list[dict]:
+    """GET /admin/keys — list all API keys."""
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+        r = await http.get(f"{_base_url()}/admin/keys")
+        r.raise_for_status()
+        return r.json()
+
+
+async def create_api_key(name: str) -> dict:
+    """POST /admin/keys — create a new API key."""
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+        r = await http.post(f"{_base_url()}/admin/keys", json={"name": name})
+        r.raise_for_status()
+        return r.json()
+
+
+async def delete_api_key(name: str) -> None:
+    """DELETE /admin/keys/{name} — delete an API key."""
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+        r = await http.delete(f"{_base_url()}/admin/keys/{name}")
+        r.raise_for_status()
+
+
+async def rotate_api_key(name: str) -> dict:
+    """POST /admin/keys/{name}/rotate — rotate an API key."""
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+        r = await http.post(f"{_base_url()}/admin/keys/{name}/rotate")
+        r.raise_for_status()
+        return r.json()

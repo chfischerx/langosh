@@ -4,7 +4,7 @@ import os
 
 import langosh.state as state
 
-from .menus import AGENT_EDIT_COMMANDS_MENU, AGENTS_COMMANDS_MENU, CHAT_COMMANDS_MENU, CODE_COMMANDS_MENU, MAIN_COMMANDS
+from .menus import ADMIN_COMMANDS_MENU, AGENT_EDIT_COMMANDS_MENU, AGENTS_COMMANDS_MENU, AGENTS_GRAPH_COMMANDS_MENU, CHAT_COMMANDS_MENU, CODE_COMMANDS_MENU
 
 
 def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
@@ -25,18 +25,24 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             state.console.print("  [dim](any text)[/dim]                         Send as coding task (with tools)")
             for cmd, desc in CODE_COMMANDS_MENU:
                 state.console.print(f"  {cmd:<40} {desc}")
-        elif state.current_mode == "agents" and state.agent_editing:
+        elif state.current_mode == "main" and state.agent_editing:
             state.console.print("[bold]Agent edit mode commands:[/bold]")
             state.console.print("  [dim](any text)[/dim]                         Send as edit instruction")
             for cmd, desc in AGENT_EDIT_COMMANDS_MENU:
                 state.console.print(f"  {cmd:<40} {desc}")
-        elif state.current_mode == "agents":
-            state.console.print("[bold]Agents mode commands:[/bold]")
-            for cmd, desc in AGENTS_COMMANDS_MENU:
+        elif state.current_mode == "admin":
+            state.console.print("[bold]Admin mode commands:[/bold]")
+            for cmd, desc in ADMIN_COMMANDS_MENU:
+                state.console.print(f"  {cmd:<40} {desc}")
+        elif state.active_graph_id:
+            # agents mode with a graph selected
+            state.console.print(f"[bold]Graph: {state.active_graph_id}[/bold]")
+            for cmd, desc in AGENTS_GRAPH_COMMANDS_MENU:
                 state.console.print(f"  {cmd:<40} {desc}")
         else:
-            state.console.print("[bold]Main mode commands:[/bold]")
-            for cmd, desc in MAIN_COMMANDS:
+            # agents mode — no graph selected
+            state.console.print("[bold]Agents mode — select a graph to get started:[/bold]")
+            for cmd, desc in AGENTS_COMMANDS_MENU:
                 state.console.print(f"  {cmd:<40} {desc}")
         return "continue"
 
@@ -47,7 +53,7 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             state.console.print(f"[bold cyan]Resumed chat mode[/bold cyan] [dim]({turns} turns)[/dim]")
         else:
             state.console.print("[bold cyan]Entered chat mode.[/bold cyan] Type text to send to the LLM.")
-        state.console.print("[dim]Type / to see commands, /back to return.[/dim]")
+        state.console.print("[dim]Type / to see commands, /home to return.[/dim]")
         return "continue"
 
     if cmd_name == "code":
@@ -57,13 +63,20 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             state.console.print(f"[bold cyan]Resumed code mode[/bold cyan] [dim]({turns} turns, {state.code_sub_mode})[/dim]")
         else:
             state.console.print(f"[bold cyan]Entered code mode ({state.code_sub_mode}).[/bold cyan] Type a task — the LLM can read, write, and search files.")
-        state.console.print("[dim]Type / to see commands, /back to return.[/dim]")
+        state.console.print("[dim]Type / to see commands, /home to return.[/dim]")
         return "continue"
 
-    if cmd_name == "agents":
-        state.current_mode = "agents"
-        state.console.print("[bold cyan]Entered agents mode.[/bold cyan] Manage your LangGraph agents.")
-        state.console.print("[dim]Type / to see commands, /back to return.[/dim]")
+    if cmd_name == "home":
+        state.current_mode = "main"
+        state.agent_editing = False
+        state.console.print("[bold cyan]Home.[/bold cyan]")
+        state.console.print("[dim]Type /help for commands.[/dim]")
+        return "continue"
+
+    if cmd_name == "admin":
+        state.current_mode = "admin"
+        state.console.print("[bold cyan]Admin mode.[/bold cyan] Manage langosh-server.")
+        state.console.print("[dim]Type /help for commands, /home to return.[/dim]")
         return "continue"
 
     if cmd_name == "server":
@@ -167,7 +180,7 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
         )
         return "continue"
 
-    if cmd_name == "edit" and state.current_mode == "agents":
+    if cmd_name == "edit" and state.current_mode == "main":
         if not state.active_graph_id:
             state.console.print("[red]No graph selected. Use /select first.[/red]")
             return "continue"
@@ -666,9 +679,33 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             state.console.print(
                 f"[green]Deleted {graph_id}.[/green] "
                 f"[dim](langgraph.json: {'removed' if removed_entry else 'absent'}, "
-                f"folder: {'removed' if removed_folder else 'absent'})[/dim]\n"
-                "[dim]Restart langosh-server to drop the registered graph.[/dim]"
+                f"folder: {'removed' if removed_folder else 'absent'})[/dim]"
             )
+
+            # Auto-commit and push to git in the agents repo
+            import subprocess
+
+            from ..settings import get_agents_path
+
+            agents_path = str(get_agents_path())
+            subprocess.run(["git", "add", "-A"], cwd=agents_path, capture_output=True)
+            result = subprocess.run(
+                ["git", "commit", "-m", f"Delete graph: {graph_id}"],
+                cwd=agents_path, capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                state.console.print(f"[dim]Committed: {result.stdout.strip().splitlines()[-1]}[/dim]")
+                push = subprocess.run(
+                    ["git", "push"], cwd=agents_path, capture_output=True, text=True,
+                )
+                if push.returncode == 0:
+                    state.console.print("[dim]Pushed to remote.[/dim]")
+                else:
+                    state.console.print(f"[yellow]Push failed:[/yellow] [dim]{push.stderr.strip()}[/dim]")
+            else:
+                state.console.print(f"[dim]{result.stdout.strip() or result.stderr.strip()}[/dim]")
+
+            state.console.print("[dim]Restart langosh-server to drop the registered graph.[/dim]")
         else:
             state.console.print(f"[red]Nothing found for graph: {graph_id}[/red]")
         return "continue"
@@ -761,7 +798,7 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
         from ..settings import set as set_setting
 
         labels = {"plan": "All tool calls require approval", "auto": "Writes require approval", "edit": "No approvals"}
-        if state.current_mode == "agents":
+        if state.current_mode == "main":
             state.agent_sub_mode = cmd_name
             set_setting("agent_sub_mode", cmd_name)
         else:
@@ -853,7 +890,7 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             state.code_summary = ""
             clear_history("code")
             state.console.print("[dim]Code history cleared.[/dim]")
-        elif state.current_mode == "agents" and state.active_graph_id:
+        elif state.current_mode == "main" and state.active_graph_id:
             import asyncio
 
             from ..agents import server_client
@@ -876,9 +913,129 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             state.console.print("[dim]Nothing to clear.[/dim]")
         return "continue"
 
-    if cmd_name == "back":
+    # ── admin mode commands ────────────────────────────────────────────────
+
+    if cmd_name == "info":
+        import asyncio
+
+        from ..agents import server_client
+
+        try:
+            info = asyncio.run(server_client.server_info())
+        except Exception as e:
+            state.console.print(f"[bold red]Server error:[/bold red] {e}")
+            return "continue"
+
+        for key, value in info.items():
+            if isinstance(value, (dict, list)):
+                import json as _json
+                state.console.print(f"  [cyan]{key}:[/cyan] {_json.dumps(value, indent=2)}")
+            else:
+                state.console.print(f"  [cyan]{key}:[/cyan] {value}")
+        return "continue"
+
+    if cmd_name == "reload" and state.current_mode == "admin":
+        import asyncio
+
+        from ..agents import server_client
+
+        try:
+            result = asyncio.run(server_client.reload_agents())
+            state.console.print("[green]Agents reloaded on server.[/green]")
+            if isinstance(result, dict):
+                for k, v in result.items():
+                    state.console.print(f"  [dim]{k}: {v}[/dim]")
+        except Exception as e:
+            state.console.print(f"[bold red]Error:[/bold red] {e}")
+        return "continue"
+
+    if cmd_name == "keys" and state.current_mode == "admin":
+        import asyncio
+
+        from ..agents import server_client
+
+        try:
+            keys = asyncio.run(server_client.list_api_keys())
+        except Exception as e:
+            state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        if not keys:
+            state.console.print("[dim]No API keys configured.[/dim]")
+        else:
+            for k in keys:
+                name = k.get("name", "unnamed")
+                created = k.get("created_at", "")
+                short_key = k.get("key", k.get("api_key", ""))
+                if isinstance(short_key, str) and len(short_key) > 12:
+                    short_key = short_key[:8] + "..."
+                state.console.print(f"  [cyan]{name}[/cyan] — {short_key} [dim]({created})[/dim]")
+        return "continue"
+
+    if cmd_name == "key" and state.current_mode == "admin":
+        import asyncio
+
+        import questionary
+
+        from ..agents import server_client
+
+        sub = parts[1].strip().split(None, 1) if len(parts) > 1 else []
+        sub_cmd = sub[0].lower() if sub else ""
+        sub_arg = sub[1].strip() if len(sub) > 1 else ""
+
+        if sub_cmd == "create":
+            name = sub_arg or questionary.text("Key name:").ask()
+            if not name or not name.strip():
+                state.console.print("[dim]Cancelled.[/dim]")
+                return "continue"
+            try:
+                result = asyncio.run(server_client.create_api_key(name.strip()))
+                key_val = result.get("key") or result.get("api_key") or str(result)
+                state.console.print(f"[green]Created API key '{name.strip()}':[/green]")
+                state.console.print(f"  [bold]{key_val}[/bold]")
+                state.console.print("[dim]Save this key — it won't be shown again.[/dim]")
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
+
+        elif sub_cmd == "delete":
+            name = sub_arg or questionary.text("Key name to delete:").ask()
+            if not name or not name.strip():
+                state.console.print("[dim]Cancelled.[/dim]")
+                return "continue"
+            confirm = questionary.confirm(f"Delete API key '{name.strip()}'?", default=False).ask()
+            if confirm:
+                try:
+                    asyncio.run(server_client.delete_api_key(name.strip()))
+                    state.console.print(f"[green]Deleted API key '{name.strip()}'.[/green]")
+                except Exception as e:
+                    state.console.print(f"[bold red]Error:[/bold red] {e}")
+
+        elif sub_cmd == "rotate":
+            name = sub_arg or questionary.text("Key name to rotate:").ask()
+            if not name or not name.strip():
+                state.console.print("[dim]Cancelled.[/dim]")
+                return "continue"
+            confirm = questionary.confirm(f"Rotate API key '{name.strip()}'?", default=False).ask()
+            if confirm:
+                try:
+                    result = asyncio.run(server_client.rotate_api_key(name.strip()))
+                    key_val = result.get("key") or result.get("api_key") or str(result)
+                    state.console.print(f"[green]Rotated API key '{name.strip()}':[/green]")
+                    state.console.print(f"  [bold]{key_val}[/bold]")
+                    state.console.print("[dim]Save this key — the old one is now invalid.[/dim]")
+                except Exception as e:
+                    state.console.print(f"[bold red]Error:[/bold red] {e}")
+
+        else:
+            state.console.print(
+                "[dim]Usage: /key create <name> | /key delete <name> | /key rotate <name>[/dim]"
+            )
+        return "continue"
+
+    if cmd_name in ("back", "home"):
         state.current_mode = "main"
-        state.console.print("[dim]Back to main mode.[/dim]")
+        state.agent_editing = False
+        state.console.print("[dim]Home.[/dim]")
         return "continue"
 
     return "dispatch"

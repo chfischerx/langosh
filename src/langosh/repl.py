@@ -111,7 +111,7 @@ def repl(app) -> None:
     if saved_agent_sub_mode in ("plan", "auto", "edit"):
         state.agent_sub_mode = saved_agent_sub_mode
 
-    state.console.print("[bold cyan]langosh[/bold cyan] interactive mode")
+    state.console.print("[bold cyan]langosh[/bold cyan] — LangGraph agent builder")
     name = model_display_name()
     if name:
         state.console.print(f"[dim]Model: {name}[/dim]")
@@ -203,7 +203,7 @@ def repl(app) -> None:
                 state.console.print("\n[yellow]Interrupted.[/yellow]")
             except Exception as e:
                 state.console.print(f"[bold red]Error:[/bold red] {e}")
-        elif state.current_mode == "agents" and state.agent_editing:
+        elif state.current_mode == "main" and state.agent_editing:
             from .agents.editor import send_edit_query
 
             try:
@@ -213,4 +213,4 @@ def repl(app) -> None:
             except Exception as e:
                 state.console.print(f"[bold red]Error:[/bold red] {e}")
         else:
-            state.console.print("[dim]Use /help to see commands, or /chat or /code to enter LLM mode.[/dim]")
+            state.console.print("[dim]Type /help for commands.[/dim]")

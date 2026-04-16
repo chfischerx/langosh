@@ -15,7 +15,7 @@ from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.layout.processors import BeforeInput
 from prompt_toolkit.styles import Style as PtStyle
 
-from .commands.menus import AGENT_EDIT_COMMANDS_MENU, AGENTS_COMMANDS_MENU, CHAT_COMMANDS_MENU, CODE_COMMANDS_MENU, MAIN_COMMANDS
+from .commands.menus import ADMIN_COMMANDS_MENU, AGENT_EDIT_COMMANDS_MENU, AGENTS_COMMANDS_MENU, AGENTS_GRAPH_COMMANDS_MENU, CHAT_COMMANDS_MENU, CODE_COMMANDS_MENU
 import langosh.state as state
 
 
@@ -40,11 +40,12 @@ class SlashCompleter(Completer):
                 )
 
 
-_main_completer = SlashCompleter(MAIN_COMMANDS)
 _chat_completer = SlashCompleter(CHAT_COMMANDS_MENU)
 _code_completer = SlashCompleter(CODE_COMMANDS_MENU)
 _agents_completer = SlashCompleter(AGENTS_COMMANDS_MENU)
+_agents_graph_completer = SlashCompleter(AGENTS_GRAPH_COMMANDS_MENU)
 _agent_edit_completer = SlashCompleter(AGENT_EDIT_COMMANDS_MENU)
+_admin_completer = SlashCompleter(ADMIN_COMMANDS_MENU)
 
 _history = InMemoryHistory()
 
@@ -76,15 +77,15 @@ def _mode_bar() -> str:
     cols = os.get_terminal_size().columns
     if state.current_mode == "code":
         mode_label = f"{state.current_mode}:{state.code_sub_mode}"
-    elif state.current_mode == "agents" and state.agent_editing:
-        mode_label = f"agents:edit:{state.agent_sub_mode}"
-    elif state.current_mode == "agents" and state.active_graph_id:
-        mode_label = "agents"
+    elif state.current_mode == "main" and state.agent_editing:
+        mode_label = f"edit:{state.agent_sub_mode}"
+    elif state.current_mode == "main" and state.active_graph_id:
+        mode_label = state.active_graph_id
     else:
         mode_label = state.current_mode
     label = f" {mode_label} "
-    if state.current_mode == "agents" and state.active_graph_id:
-        label = f" {mode_label} ({state.active_graph_id}) "
+    if state.current_mode == "main" and state.active_graph_id and not state.agent_editing:
+        label = f" {mode_label} "
     elif state.current_mode in ("chat", "code") and state.active_model["provider"]:
         name = model_display_name()
         if name:
@@ -106,9 +107,12 @@ def get_input() -> str | None:
     sys.stdout.flush()
 
     sep = "─" * os.get_terminal_size().columns
-    effective_mode = "agent_edit" if state.current_mode == "agents" and state.agent_editing else state.current_mode
-    _completers = {"main": _main_completer, "chat": _chat_completer, "code": _code_completer, "agents": _agents_completer, "agent_edit": _agent_edit_completer}
-    completer = _completers.get(effective_mode, _main_completer)
+    effective_mode = "agent_edit" if state.current_mode == "main" and state.agent_editing else state.current_mode
+    _completers = {"chat": _chat_completer, "code": _code_completer, "agent_edit": _agent_edit_completer, "admin": _admin_completer}
+    if effective_mode == "main":
+        completer = _agents_graph_completer if state.active_graph_id else _agents_completer
+    else:
+        completer = _completers.get(effective_mode, _agents_completer)
 
     buf = Buffer(
         history=_history,
