@@ -167,27 +167,57 @@ async def stream_run(
             if on_event:
                 await on_event("run_start", {"run_id": run_id})
 
-        elif event == "messages" and isinstance(data, (list, tuple)) and data:
-            chunk = data[0] if len(data) > 0 else {}
+        elif event in ("messages", "messages/partial") and isinstance(data, (list, tuple)) and data:
+            # Data format: ["messages", [chunk_dict, metadata_dict]]
+            # or just [chunk_dict, metadata_dict] depending on server version
+            payload = data
+            if len(payload) >= 2 and isinstance(payload[0], str) and payload[0] == "messages":
+                payload = payload[1]  # unwrap the outer ["messages", ...] wrapper
+            if not isinstance(payload, (list, tuple)) or not payload:
+                continue
+
+            chunk = payload[0] if len(payload) > 0 else {}
             if not isinstance(chunk, dict):
                 continue
-            msg_type = chunk.get("type", "")
-            content = chunk.get("content", "")
 
-            if msg_type in ("AIMessageChunk", "AIMessage", "ai") and isinstance(content, str) and content:
-                text_chunks.append(content)
-                if on_event:
-                    await on_event("token", {"text": content})
+            # Handle LangChain constructor format: {"lc": 1, "kwargs": {"content": ..., "type": ...}}
+            if "kwargs" in chunk:
+                kwargs = chunk["kwargs"]
+                msg_type = kwargs.get("type", chunk.get("type", ""))
+                raw_content = kwargs.get("content", "")
+                tool_calls = kwargs.get("tool_calls") or []
+                chunk_name = kwargs.get("name", "")
+            else:
+                msg_type = chunk.get("type", "")
+                raw_content = chunk.get("content", "")
+                tool_calls = chunk.get("tool_calls") or []
+                chunk_name = chunk.get("name", "")
 
-            tool_calls = chunk.get("tool_calls") or []
+            # Extract text from content — can be a plain string or a list
+            # of content blocks (e.g. [{"type": "text", "text": "..."}])
+            if msg_type in ("AIMessageChunk", "AIMessage", "ai"):
+                text = ""
+                if isinstance(raw_content, str):
+                    text = raw_content
+                elif isinstance(raw_content, list):
+                    text = "".join(
+                        block.get("text", "")
+                        for block in raw_content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    )
+                if text:
+                    text_chunks.append(text)
+                    if on_event:
+                        await on_event("token", {"text": text})
+
             for tc in tool_calls:
                 if isinstance(tc, dict) and tc.get("name"):
                     if on_event:
                         await on_event("tool_call", {"name": tc["name"], "input": tc.get("args") or {}})
 
             if msg_type in ("ToolMessage", "tool") and on_event:
-                preview = content if isinstance(content, str) else str(content)
-                await on_event("tool_result", {"name": chunk.get("name", ""), "preview": preview[:200]})
+                preview = raw_content if isinstance(raw_content, str) else str(raw_content)
+                await on_event("tool_result", {"name": chunk_name, "preview": preview[:200]})
 
         elif event == "error" and isinstance(data, dict):
             msg = data.get("message") or data.get("error") or "Unknown error"
