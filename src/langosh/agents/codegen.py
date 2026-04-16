@@ -13,32 +13,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from .registry import graph_dir
+from .tool_catalog import load_tool_catalog, manifest_path
 
 DEFAULT_MODEL = "anthropic:claude-sonnet-4-5-20250929"
 
-# Map tool-name → (module_path, symbol). Extend as we add tool packages.
-_TOOL_IMPORTS: dict[str, tuple[str, str]] = {
-    # files
-    "read_file": ("tools.files", "read_file"),
-    "write_file": ("tools.files", "write_file"),
-    "edit_file": ("tools.files", "edit_file"),
-    "list_directory": ("tools.files", "list_directory"),
-    "glob_files": ("tools.files", "glob_files"),
-    "grep_files": ("tools.files", "grep_files"),
-    # python sandbox
-    "execute_python": ("tools.python_exec", "execute_python"),
-    # web
-    "web_search": ("tools.websearch", "web_search"),
-    "fetch_rss": ("tools.rss", "fetch_rss"),
-    # slack (optional dep: slack-sdk)
-    "send_slack_message": ("tools.slack", "send_slack_message"),
-    "ask_slack": ("tools.slack", "ask_slack"),
-    # telegram (optional dep: python-telegram-bot)
-    "send_telegram_message": ("tools.telegram", "send_telegram_message"),
-    "ask_telegram": ("tools.telegram", "ask_telegram"),
+# ── shared helpers ───────────────────────────────────────────────────────────
+
+_STATE_TYPE_MAP = {
+    "str": "str",
+    "int": "int",
+    "float": "float",
+    "bool": "bool",
+    "list": "list",
+    "dict": "dict",
 }
 
 
@@ -47,22 +38,37 @@ def _resolve_tool_imports(tool_names: list[str]) -> tuple[list[str], list[str]]:
 
     Unknown tools raise ValueError so the user sees a clear error instead of a
     runtime ImportError when the server tries to load the generated module.
+    Tool name → (module, symbol) is sourced from the langosh-agents manifest.
     """
+    catalog = {spec.name: (spec.module, spec.function) for spec in load_tool_catalog()}
     by_module: dict[str, list[str]] = {}
     for name in tool_names:
-        if name not in _TOOL_IMPORTS:
+        if name not in catalog:
             raise ValueError(
-                f"Unknown tool '{name}'. Add an entry to _TOOL_IMPORTS in "
-                f"agents/codegen.py or remove it from the definition."
+                f"Unknown tool '{name}'. Add an entry to the tool manifest at "
+                f"{manifest_path()} or remove it from the definition."
             )
-        mod, symbol = _TOOL_IMPORTS[name]
+        mod, symbol = catalog[name]
         by_module.setdefault(mod, []).append(symbol)
     import_lines = [
         f"from {mod} import {', '.join(sorted(set(syms)))}"
         for mod, syms in sorted(by_module.items())
     ]
-    tool_symbols = [_TOOL_IMPORTS[n][1] for n in tool_names]
+    tool_symbols = [catalog[n][1] for n in tool_names]
     return import_lines, tool_symbols
+
+
+def _model_lines(pinned_model: str | None) -> tuple[str, str]:
+    """Return (extra_import, default_model_line) for the generated module."""
+    if pinned_model:
+        return "", f"DEFAULT_MODEL = {pinned_model!r}"
+    return (
+        "import os\n",
+        f'DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", {DEFAULT_MODEL!r})',
+    )
+
+
+# ── simple agent (ReAct) ────────────────────────────────────────────────────
 
 
 def _compile_simple_source(definition: dict, graph_id: str) -> str:
@@ -76,18 +82,7 @@ def _compile_simple_source(definition: dict, graph_id: str) -> str:
     safe_prompt = system_prompt.replace('"""', "'''")
     tools_arg = "[" + ", ".join(tool_symbols) + "]"
     imports_block = "\n".join(tool_imports)
-
-    # Two emission modes:
-    #   - Pinned model: the user chose one at /create time. Bake it.
-    #   - Unpinned: read DEFAULT_MODEL from the server's env at runtime; the
-    #     hardcoded value is just a safety net for running the module
-    #     standalone (outside the server).
-    if pinned_model:
-        os_import = ""
-        default_line = f"DEFAULT_MODEL = {pinned_model!r}"
-    else:
-        os_import = "import os\n"
-        default_line = f'DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", {DEFAULT_MODEL!r})'
+    os_import, default_line = _model_lines(pinned_model)
 
     return (
         f'"""{graph_id} — generated from definition.json.\n'
@@ -112,21 +107,449 @@ def _compile_simple_source(definition: dict, graph_id: str) -> str:
     )
 
 
+# ── custom StateGraph agent ─────────────────────────────────────────────────
+
+
+def _validate_custom(definition: dict, functions: list[dict]) -> None:
+    """Validate a custom agent definition before emitting code."""
+    if "state" not in definition:
+        raise ValueError(
+            "Custom agent definitions must have a 'state' object declaring "
+            "field names and types (e.g. {\"user_query\": \"str\"})."
+        )
+    state = definition["state"]
+    if not isinstance(state, dict) or not state:
+        raise ValueError("'state' must be a non-empty dict of {field: type_str}.")
+    for field_name, type_str in state.items():
+        if type_str != "messages" and type_str not in _STATE_TYPE_MAP:
+            raise ValueError(
+                f"Unknown state type '{type_str}' for field '{field_name}'. "
+                f"Allowed: {', '.join(sorted(_STATE_TYPE_MAP))} or 'messages'."
+            )
+
+    nodes = definition.get("nodes")
+    if not nodes:
+        raise ValueError("Custom agent must have at least one node in 'nodes'.")
+    edges = definition.get("edges")
+    if not edges:
+        raise ValueError("Custom agent must have at least one edge in 'edges'.")
+
+    node_names = {n["name"] for n in nodes}
+    catalog = {spec.name: spec for spec in load_tool_catalog()}
+    func_names = {f["name"] for f in functions}
+
+    for node in nodes:
+        ntype = node.get("type")
+        name = node.get("name", "<unnamed>")
+        if not ntype:
+            raise ValueError(f"Node '{name}' is missing a 'type' field.")
+
+        if ntype == "tool":
+            tool = node.get("tool")
+            if not tool:
+                raise ValueError(f"Tool node '{name}' is missing a 'tool' field.")
+            if tool not in catalog:
+                raise ValueError(
+                    f"Tool node '{name}' references unknown tool '{tool}'. "
+                    f"Known tools: {', '.join(sorted(catalog))}."
+                )
+            spec = catalog[tool]
+            for param_name in node.get("args", {}):
+                if param_name not in spec.param_names:
+                    raise ValueError(
+                        f"Tool node '{name}': static arg '{param_name}' is not a "
+                        f"parameter of '{tool}'. Valid: {', '.join(sorted(spec.param_names))}."
+                    )
+            for param_name in node.get("args_from_state", {}):
+                if param_name not in spec.param_names:
+                    raise ValueError(
+                        f"Tool node '{name}': args_from_state key '{param_name}' is not a "
+                        f"parameter of '{tool}'. Valid: {', '.join(sorted(spec.param_names))}."
+                    )
+
+        elif ntype == "llm":
+            if "tools" in node:
+                for t in node["tools"]:
+                    if t not in catalog:
+                        raise ValueError(
+                            f"LLM node '{name}' references unknown tool '{t}'."
+                        )
+
+        elif ntype == "function":
+            if name not in func_names and "code" not in node:
+                raise ValueError(
+                    f"Function node '{name}' has no 'code' and no matching "
+                    f"function file was provided."
+                )
+
+        else:
+            raise ValueError(
+                f"Node '{name}' has unknown type '{ntype}'. "
+                f"Allowed: tool, llm, function."
+            )
+
+        if "output_field" in node and node["output_field"] not in state:
+            raise ValueError(
+                f"Node '{name}' output_field '{node['output_field']}' "
+                f"is not declared in the state schema."
+            )
+
+    special = {"__start__", "__end__"}
+    for edge in edges:
+        frm = edge.get("from", "")
+        to = edge.get("to")
+        if frm not in special and frm not in node_names:
+            raise ValueError(f"Edge 'from' references unknown node '{frm}'.")
+        if to is not None and to not in special and to not in node_names:
+            raise ValueError(f"Edge 'to' references unknown node '{to}'.")
+
+        if edge.get("conditional"):
+            route_field = edge.get("route_field")
+            if not route_field:
+                source_node = next((n for n in nodes if n["name"] == frm), None)
+                route_field = source_node.get("output_field") if source_node else None
+            if route_field and route_field not in state:
+                raise ValueError(
+                    f"Conditional edge from '{frm}': route_field "
+                    f"'{route_field}' is not in the state schema."
+                )
+            if not edge.get("mapping"):
+                raise ValueError(
+                    f"Conditional edge from '{frm}' is missing 'mapping'."
+                )
+
+
+def _emit_state_class(state: dict) -> tuple[str, list[str]]:
+    """Emit a TypedDict class. Returns (source, extra_imports)."""
+    extra_imports: list[str] = []
+    needs_annotated = "messages" in state.values()
+
+    fields: list[str] = []
+    for name, type_str in state.items():
+        if type_str == "messages":
+            fields.append(
+                f"    {name}: Annotated[list[AnyMessage], add_messages]"
+            )
+            extra_imports.append(
+                "from langchain_core.messages import AnyMessage"
+            )
+            extra_imports.append(
+                "from langgraph.graph.message import add_messages"
+            )
+        else:
+            fields.append(f"    {name}: {_STATE_TYPE_MAP[type_str]}")
+
+    imports_needed = []
+    if needs_annotated:
+        imports_needed.append("from typing import Annotated, TypedDict")
+    else:
+        imports_needed.append("from typing import TypedDict")
+
+    src = "class State(TypedDict):\n" + "\n".join(fields) + "\n"
+    return src, imports_needed + extra_imports
+
+
+def _emit_tool_node(node: dict) -> str:
+    """Emit an async wrapper function for a tool node."""
+    name = node["name"]
+    tool_func = node["tool"]
+    args = node.get("args", {})
+    args_from_state = node.get("args_from_state", {})
+    output_field = node.get("output_field")
+
+    kwargs: list[str] = []
+    for param, value in args_from_state.items():
+        kwargs.append(f"{param}=state[{value!r}]")
+    for param, value in args.items():
+        kwargs.append(f"{param}={value!r}")
+
+    call = f"await {tool_func}({', '.join(kwargs)})"
+
+    lines = [f"async def _{name}(state: State) -> dict:"]
+    if output_field:
+        lines.append(f"    result = {call}")
+        lines.append(f"    return {{{output_field!r}: result}}")
+    else:
+        lines.append(f"    {call}")
+        lines.append("    return {}")
+    return "\n".join(lines) + "\n"
+
+
+def _template_to_fstring(template: str) -> str:
+    """Convert a `{field}` placeholder template to a Python f-string expression.
+
+    `{user_query}` → `{state['user_query']}`
+    Double braces `{{` / `}}` are preserved as literal braces.
+    """
+    def _replace(m: re.Match) -> str:
+        field_name = m.group(1)
+        return "{state['" + field_name + "']}"
+
+    # Temporarily replace {{ and }} to avoid matching them
+    s = template.replace("{{", "\x00").replace("}}", "\x01")
+    s = re.sub(r"\{(\w+)\}", _replace, s)
+    return s.replace("\x00", "{{").replace("\x01", "}}")
+
+
+def _emit_llm_node(node: dict) -> tuple[str, str]:
+    """Emit an async function for an LLM node.
+
+    Returns (function_source, module_level_source) — module_level_source
+    contains any ReAct sub-agent definitions that belong at module scope.
+    """
+    name = node["name"]
+    system = node.get("system", "")
+    prompt_template = node.get("prompt_template", "")
+    output_field = node.get("output_field")
+    max_tokens = node.get("max_tokens")
+    tool_names = node.get("tools", [])
+
+    module_level = ""
+
+    if tool_names:
+        # LLM node with tools → ReAct sub-agent
+        _, tool_symbols = _resolve_tool_imports(tool_names)
+        tools_arg = "[" + ", ".join(tool_symbols) + "]"
+        safe_system = system.replace('"""', "'''")
+
+        agent_var = f"_{name}_agent"
+        module_level = (
+            f'{agent_var} = create_react_agent(\n'
+            f'    model=DEFAULT_MODEL,\n'
+            f'    tools={tools_arg},\n'
+            f'    prompt="""{safe_system}""",\n'
+            f')\n'
+        )
+
+        fstring_body = _template_to_fstring(prompt_template)
+        lines = [
+            f"async def _{name}(state: State) -> dict:",
+            f'    prompt_text = f"""{fstring_body}"""',
+            f"    result = await {agent_var}.ainvoke(",
+            f'        {{"messages": [HumanMessage(content=prompt_text)]}}',
+            f"    )",
+            f'    last_msg = result["messages"][-1]',
+        ]
+        if output_field:
+            lines.append(f"    return {{{output_field!r}: last_msg.content}}")
+        else:
+            lines.append("    return {}")
+    else:
+        # Plain LLM node — single model call
+        fstring_body = _template_to_fstring(prompt_template)
+        invoke_kwargs = ""
+        if max_tokens:
+            invoke_kwargs = f", max_tokens={max_tokens}"
+
+        lines = [
+            f"async def _{name}(state: State) -> dict:",
+            f"    from langchain.chat_models import init_chat_model",
+            f"    llm = init_chat_model(DEFAULT_MODEL)",
+            f"    messages = []",
+        ]
+        if system:
+            safe_system = system.replace('"""', "'''")
+            lines.append(
+                f'    messages.append(SystemMessage(content="""{safe_system}"""))'
+            )
+        lines.append(
+            f'    messages.append(HumanMessage(content=f"""{fstring_body}"""))'
+        )
+        lines.append(f"    response = await llm.ainvoke(messages{invoke_kwargs})")
+        if output_field:
+            lines.append(f"    return {{{output_field!r}: response.content}}")
+        else:
+            lines.append("    return {}")
+
+    return "\n".join(lines) + "\n", module_level
+
+
+def _emit_routing_function(edge: dict, nodes: list[dict]) -> str:
+    """Emit a routing function for a conditional edge."""
+    frm = edge["from"]
+    route_field = edge.get("route_field")
+    if not route_field:
+        source_node = next((n for n in nodes if n["name"] == frm), None)
+        route_field = source_node.get("output_field", "route") if source_node else "route"
+
+    safe_name = frm.replace("-", "_")
+    return (
+        f"def _route_from_{safe_name}(state: State) -> str:\n"
+        f"    return state[{route_field!r}]\n"
+    )
+
+
+def _edge_ref(name: str) -> str:
+    """Convert __start__/__end__ to START/END constants, else quote."""
+    if name == "__start__":
+        return "START"
+    if name == "__end__":
+        return "END"
+    return repr(name)
+
+
+def _compile_custom_source(
+    definition: dict, functions: list[dict], graph_id: str
+) -> str:
+    """Generate Python source for a custom StateGraph agent."""
+    _validate_custom(definition, functions)
+
+    state = definition["state"]
+    nodes = definition["nodes"]
+    edges = definition["edges"]
+    pinned_model = definition.get("model")
+
+    # Collect all tool names across tool-nodes AND llm-nodes-with-tools
+    all_tool_names: list[str] = []
+    has_react_agent = False
+    has_plain_llm = False
+    for node in nodes:
+        if node["type"] == "tool":
+            all_tool_names.append(node["tool"])
+        elif node["type"] == "llm":
+            if node.get("tools"):
+                all_tool_names.extend(node["tools"])
+                has_react_agent = True
+            else:
+                has_plain_llm = True
+
+    # Deduplicate tool imports
+    unique_tools = list(dict.fromkeys(all_tool_names))
+    tool_imports, _ = _resolve_tool_imports(unique_tools) if unique_tools else ([], [])
+
+    # Function node imports
+    func_imports = []
+    for node in nodes:
+        if node["type"] == "function":
+            func_imports.append(
+                f"from functions.{node['name']} import {node['name']}"
+            )
+
+    # State class
+    state_src, state_imports = _emit_state_class(state)
+
+    # Model
+    os_import, default_line = _model_lines(pinned_model)
+
+    # Core imports
+    core_imports = ["from langgraph.graph import END, START, StateGraph"]
+    if has_react_agent:
+        core_imports.append("from langgraph.prebuilt import create_react_agent")
+    if has_plain_llm or has_react_agent:
+        core_imports.append(
+            "from langchain_core.messages import HumanMessage, SystemMessage"
+        )
+
+    # Node functions + module-level agents
+    node_funcs: list[str] = []
+    module_agents: list[str] = []
+    for node in nodes:
+        if node["type"] == "tool":
+            node_funcs.append(_emit_tool_node(node))
+        elif node["type"] == "llm":
+            func_src, mod_src = _emit_llm_node(node)
+            node_funcs.append(func_src)
+            if mod_src:
+                module_agents.append(mod_src)
+        # function nodes are imported, not emitted
+
+    # Routing functions
+    routing_funcs: list[str] = []
+    for edge in edges:
+        if edge.get("conditional"):
+            routing_funcs.append(_emit_routing_function(edge, nodes))
+
+    # Graph construction
+    graph_lines = ["_builder = StateGraph(State)"]
+    for node in nodes:
+        nname = node["name"]
+        if node["type"] == "function":
+            graph_lines.append(f'_builder.add_node({nname!r}, {nname})')
+        else:
+            graph_lines.append(f'_builder.add_node({nname!r}, _{nname})')
+
+    for edge in edges:
+        frm = edge["from"]
+        if edge.get("conditional"):
+            safe_name = frm.replace("-", "_")
+            mapping = edge["mapping"]
+            mapping_src = "{"
+            items = []
+            for key, target in mapping.items():
+                items.append(f"{key!r}: {_edge_ref(target)}")
+            mapping_src += ", ".join(items) + "}"
+            graph_lines.append(
+                f"_builder.add_conditional_edges("
+                f"{_edge_ref(frm)}, _route_from_{safe_name}, {mapping_src})"
+            )
+        else:
+            to = edge["to"]
+            graph_lines.append(
+                f"_builder.add_edge({_edge_ref(frm)}, {_edge_ref(to)})"
+            )
+
+    graph_lines.append("graph = _builder")
+
+    # Assemble the full module
+    sections: list[str] = []
+
+    # Header
+    sections.append(
+        f'"""{graph_id} — generated from definition.json.\n'
+        f"\n"
+        f"DO NOT EDIT THIS FILE BY HAND.\n"
+        f"Edit definition.json (or use `langosh` /agents /edit) and the CLI\n"
+        f"will regenerate this module on save.\n"
+        f'"""'
+    )
+
+    # Imports
+    import_lines = []
+    if os_import:
+        import_lines.append(os_import.rstrip())
+    import_lines.extend(state_imports)
+    import_lines.extend(core_imports)
+    import_lines.extend(tool_imports)
+    import_lines.extend(func_imports)
+    sections.append("\n".join(import_lines))
+
+    # Default model
+    sections.append(default_line)
+
+    # State class
+    sections.append(state_src.rstrip())
+
+    # Module-level agents (ReAct sub-agents for llm+tools nodes)
+    if module_agents:
+        sections.append("\n".join(a.rstrip() for a in module_agents))
+
+    # Node functions
+    sections.append("\n\n".join(f.rstrip() for f in node_funcs))
+
+    # Routing functions
+    if routing_funcs:
+        sections.append("\n\n".join(f.rstrip() for f in routing_funcs))
+
+    # Graph construction
+    sections.append("\n".join(graph_lines))
+
+    return "\n\n\n".join(sections) + "\n"
+
+
+# ── public API ───────────────────────────────────────────────────────────────
+
+
 def compile_to_source(definition: dict, functions: list[dict], graph_id: str) -> str:
     """Generate Python source for a graph from its JSON definition.
 
     `functions` holds {"name": ..., "code": ...} entries for "function" nodes
-    in custom agents. Currently only "simple" agents are supported.
+    in custom agents.
     """
     agent_type = definition.get("type", "simple")
     if agent_type == "simple":
         return _compile_simple_source(definition, graph_id)
     if agent_type == "custom":
-        raise NotImplementedError(
-            "Custom agents (state schema + nodes + edges) aren't supported "
-            "by codegen yet. For now, write the graph module by hand under "
-            "<agents_path>/graphs/<id>/__init__.py and add a langgraph.json entry."
-        )
+        return _compile_custom_source(definition, functions, graph_id)
     raise ValueError(f"Unknown agent type: {agent_type}")
 
 
@@ -154,8 +577,7 @@ def write_compiled_graph(graph_id: str, definition: dict, functions: list[dict])
         json.dumps(definition, indent=2, ensure_ascii=False) + "\n"
     )
 
-    # Custom function files (used by "function" node type — not yet exposed
-    # through codegen, but persisted for round-tripping).
+    # Custom function files (used by "function" node type).
     if functions:
         funcs_dir = folder / "functions"
         funcs_dir.mkdir(exist_ok=True)

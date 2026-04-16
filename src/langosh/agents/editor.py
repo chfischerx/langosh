@@ -57,7 +57,7 @@ def send_edit_query(text: str) -> None:
     """Send an edit instruction to the LLM with builder tools."""
     from ..config import DEFAULT_MODELS, get_settings
     from ..llm import call_with_tools
-    from ..llm.prompts.builder import BUILDER_SYSTEM_PROMPT
+    from ..llm.prompts.builder import builder_system_prompt
     from ..queries import format_elapsed
 
     graph_id = state.active_graph_id
@@ -68,6 +68,7 @@ def send_edit_query(text: str) -> None:
     settings = get_settings()
     provider = state.active_model["provider"] or settings.default_provider
     model_id = state.active_model["model_id"] or settings.default_model or DEFAULT_MODELS.get(provider, "")
+    system_prompt = builder_system_prompt()
 
     # Add user message to history
     state.agent_messages.append({"role": "user", "content": text})
@@ -90,7 +91,7 @@ def send_edit_query(text: str) -> None:
                     provider=provider,
                     model_id=model_id,
                     api_key=None,
-                    system=BUILDER_SYSTEM_PROMPT,
+                    system=system_prompt,
                     messages=messages_to_send,
                     tools=TOOLS,
                     tool_dispatcher=_make_guarded_dispatcher(graph_id),
@@ -128,7 +129,7 @@ def send_edit_query(text: str) -> None:
         "provider": provider,
         "model_id": model_id,
         "model_name": model_display_name() or model_id,
-        "system_prompt": BUILDER_SYSTEM_PROMPT,
+        "system_prompt": system_prompt,
         "messages_sent": messages_to_send,
         "message_count": len(messages_to_send),
         "tools": [t["name"] for t in TOOLS],

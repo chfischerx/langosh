@@ -65,7 +65,7 @@ def create_agent(
     """
     from ..config import DEFAULT_MODELS, get_settings
     from ..llm import call_llm_simple
-    from ..llm.prompts.builder import BUILDER_SYSTEM_PROMPT
+    from ..llm.prompts.builder import builder_system_prompt
 
     settings = get_settings()
     provider = state.active_model["provider"] or settings.default_provider
@@ -89,7 +89,7 @@ def create_agent(
             provider=provider,
             model_id=model_id,
             api_key=None,
-            system=BUILDER_SYSTEM_PROMPT,
+            system=builder_system_prompt(),
             messages=[{"role": "user", "content": user_prompt}],
         )
     )
