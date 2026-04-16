@@ -148,28 +148,27 @@ def _compile_simple_source(definition: dict, graph_id: str) -> str:
 
     if context:
         ctx_src, ctx_imports = _emit_context_schema(context)
-        import_lines = ctx_imports + core_imports
+        import_lines = ["import os"] + ctx_imports + core_imports
         if imports_block:
             import_lines.append(imports_block)
 
-        model_default = context.get("model_name", {}).get("default", DEFAULT_MODEL)
-        prompt_default = safe_prompt
-
         agent_fn = (
             f"async def agent(state: State, runtime: Runtime[ContextSchema]) -> dict:\n"
-            f"    model = init_chat_model(getattr(runtime.context, 'model_name', {model_default!r}))\n"
+            f"    model = init_chat_model(getattr(runtime.context, 'model_name', '') or DEFAULT_MODEL)\n"
             f"    bound = model.bind_tools({tools_arg})\n"
-            f"    system = SystemMessage(content=getattr(runtime.context, 'system_prompt', _DEFAULT_PROMPT))\n"
+            f"    system = SystemMessage(content=getattr(runtime.context, 'system_prompt', '') or _DEFAULT_PROMPT)\n"
             f'    response = await bound.ainvoke([system] + state["messages"])\n'
             f'    return {{"messages": [response]}}\n'
         )
 
         builder_line = "_builder = StateGraph(State, context_schema=ContextSchema)\n"
+        default_model_line = f'DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", {DEFAULT_MODEL!r})'
 
         return (
             f"{header}\n"
             + "\n".join(import_lines) + "\n"
-            + f"\n\n{ctx_src}\n"
+            + f"\n{default_model_line}\n"
+            + f"\n{ctx_src}\n"
             + f'_DEFAULT_PROMPT = """{safe_prompt}"""\n'
             + f"\n\n{state_class}\n"
             + f"\n{agent_fn}\n"
@@ -416,7 +415,7 @@ def _emit_llm_node(node: dict, has_context: bool = False) -> tuple[str, str]:
     module_level = ""
     # Context-aware nodes receive runtime for model/prompt resolution
     sig_extra = ", runtime: Runtime[ContextSchema]" if has_context else ""
-    model_expr = "init_chat_model(getattr(runtime.context, 'model_name', DEFAULT_MODEL))" if has_context else "init_chat_model(DEFAULT_MODEL)"
+    model_expr = "init_chat_model(getattr(runtime.context, 'model_name', '') or DEFAULT_MODEL)" if has_context else "init_chat_model(DEFAULT_MODEL)"
 
     if tool_names:
         # LLM node with tools → ReAct sub-agent
