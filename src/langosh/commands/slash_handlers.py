@@ -40,8 +40,8 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             for cmd, desc in AGENTS_GRAPH_COMMANDS_MENU:
                 state.console.print(f"  {cmd:<40} {desc}")
         else:
-            # agents mode — no graph selected
-            state.console.print("[bold]Agents mode — select a graph to get started:[/bold]")
+            # main mode — no graph selected
+            state.console.print("[bold]Main mode commands:[/bold]")
             for cmd, desc in AGENTS_COMMANDS_MENU:
                 state.console.print(f"  {cmd:<40} {desc}")
         return "continue"
