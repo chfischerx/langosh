@@ -72,3 +72,11 @@ def get_server_url() -> str:
         or get("server_url")
         or DEFAULT_SERVER_URL
     )
+
+
+def get_api_key() -> str | None:
+    """Resolve the API key for langosh-server authentication.
+
+    Resolution order: env LANGOSH_API_KEY > settings.json `api_key`.
+    """
+    return os.environ.get("LANGOSH_API_KEY") or get("api_key")

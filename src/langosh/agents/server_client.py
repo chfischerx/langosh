@@ -13,7 +13,7 @@ from typing import Any, Awaitable, Callable
 import httpx
 from langgraph_sdk import get_client
 
-from ..settings import get_server_url
+from ..settings import get_api_key, get_server_url
 
 # Callback signature: await on_event(event_type, data)
 StreamEventCallback = Callable[[str, dict], Awaitable[None]]
@@ -24,14 +24,19 @@ StreamEventCallback = Callable[[str, dict], Awaitable[None]]
 _DEFAULT_TIMEOUT = 30.0
 
 
+def _auth_headers() -> dict[str, str]:
+    key = get_api_key()
+    return {"x-api-key": key} if key else {}
+
+
 def _client(timeout: float = _DEFAULT_TIMEOUT):
-    return get_client(url=get_server_url(), timeout=timeout)
+    return get_client(url=get_server_url(), headers=_auth_headers(), timeout=timeout)
 
 
 async def health_check() -> bool:
     """Return True if the server responds at /ok."""
     try:
-        async with httpx.AsyncClient(timeout=3.0) as http:
+        async with httpx.AsyncClient(timeout=3.0, headers=_auth_headers()) as http:
             r = await http.get(f"{get_server_url()}/ok")
             return r.status_code == 200
     except Exception:
@@ -326,7 +331,7 @@ def _base_url() -> str:
 
 async def server_info() -> dict:
     """GET /info — server version, loaded graphs, etc."""
-    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, headers=_auth_headers()) as http:
         r = await http.get(f"{_base_url()}/info")
         r.raise_for_status()
         return r.json()
@@ -334,7 +339,7 @@ async def server_info() -> dict:
 
 async def reload_agents() -> dict:
     """POST /admin/reload — hot-reload graphs without restarting the server."""
-    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, headers=_auth_headers()) as http:
         r = await http.post(f"{_base_url()}/admin/reload")
         r.raise_for_status()
         return r.json()
@@ -342,7 +347,7 @@ async def reload_agents() -> dict:
 
 async def list_api_keys() -> list[dict]:
     """GET /admin/keys — list all API keys."""
-    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, headers=_auth_headers()) as http:
         r = await http.get(f"{_base_url()}/admin/keys")
         r.raise_for_status()
         return r.json()
@@ -350,7 +355,7 @@ async def list_api_keys() -> list[dict]:
 
 async def create_api_key(name: str) -> dict:
     """POST /admin/keys — create a new API key."""
-    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, headers=_auth_headers()) as http:
         r = await http.post(f"{_base_url()}/admin/keys", json={"name": name})
         r.raise_for_status()
         return r.json()
@@ -358,14 +363,14 @@ async def create_api_key(name: str) -> dict:
 
 async def delete_api_key(name: str) -> None:
     """DELETE /admin/keys/{name} — delete an API key."""
-    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, headers=_auth_headers()) as http:
         r = await http.delete(f"{_base_url()}/admin/keys/{name}")
         r.raise_for_status()
 
 
 async def rotate_api_key(name: str) -> dict:
     """POST /admin/keys/{name}/rotate — rotate an API key."""
-    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, headers=_auth_headers()) as http:
         r = await http.post(f"{_base_url()}/admin/keys/{name}/rotate")
         r.raise_for_status()
         return r.json()
@@ -376,7 +381,7 @@ async def rotate_api_key(name: str) -> dict:
 
 async def get_config_schema() -> list[dict]:
     """GET /admin/config/schema — all supported config params."""
-    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, headers=_auth_headers()) as http:
         r = await http.get(f"{_base_url()}/admin/config/schema")
         r.raise_for_status()
         return r.json()
@@ -385,7 +390,7 @@ async def get_config_schema() -> list[dict]:
 async def list_config(category: str | None = None) -> list[dict]:
     """GET /admin/config or /admin/config/{category}."""
     path = f"/admin/config/{category}" if category else "/admin/config"
-    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, headers=_auth_headers()) as http:
         r = await http.get(f"{_base_url()}{path}")
         r.raise_for_status()
         return r.json()
@@ -393,7 +398,7 @@ async def list_config(category: str | None = None) -> list[dict]:
 
 async def set_config(category: str, key: str, value: str) -> dict:
     """PUT /admin/config/{category} — set a config value."""
-    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, headers=_auth_headers()) as http:
         r = await http.put(
             f"{_base_url()}/admin/config/{category}",
             json={"key": key, "value": value},
@@ -404,7 +409,7 @@ async def set_config(category: str, key: str, value: str) -> dict:
 
 async def delete_config(category: str, key: str) -> dict:
     """DELETE /admin/config/{category}/{key} — remove a config value."""
-    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, headers=_auth_headers()) as http:
         r = await http.delete(f"{_base_url()}/admin/config/{category}/{key}")
         r.raise_for_status()
         return r.json()
@@ -412,7 +417,7 @@ async def delete_config(category: str, key: str) -> dict:
 
 async def reset_config() -> dict:
     """POST /admin/config/reset — delete all config keys."""
-    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, headers=_auth_headers()) as http:
         r = await http.post(f"{_base_url()}/admin/config/reset")
         r.raise_for_status()
         return r.json()

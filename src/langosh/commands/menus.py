@@ -8,7 +8,7 @@ AGENTS_COMMANDS_MENU = [
     ("/deploy", "Commit, push, and reload agents on the server"),
     ("/chat", "Switch to LLM chat mode"),
     ("/code", "Switch to LLM code mode (with tools)"),
-    ("/admin", "Switch to server admin mode"),
+    ("/admin", "Switch to admin mode"),
     ("/models", "List/filter models"),
     ("/use", "Select a model"),
     ("/version", "Show the application version"),
@@ -41,7 +41,7 @@ AGENTS_GRAPH_COMMANDS_MENU = [
     ("/commit", "Commit all changes (in agents repo)"),
     ("/chat", "Switch to LLM chat mode"),
     ("/code", "Switch to LLM code mode (with tools)"),
-    ("/admin", "Switch to server admin mode"),
+    ("/admin", "Switch to admin mode"),
     ("/help", "Show available commands"),
     ("/exit", "Quit"),
 ]
@@ -90,12 +90,8 @@ AGENT_EDIT_COMMANDS_MENU = [
 ]
 
 ADMIN_COMMANDS_MENU = [
-    ("/server", "Show or set the langosh-server URL"),
-    ("/info", "Show server info (version, graphs, status)"),
-    ("/reload", "Hot-reload agents on the server"),
-    ("/config", "View and edit server configuration"),
-    ("/keys", "List API keys"),
-    ("/key", "Manage API keys (create, delete, rotate)"),
+    ("/settings", "CLI settings (server URL, API key)"),
+    ("/server", "Manage langosh-server (info, config, keys, reload)"),
     ("/home", "Return to home"),
     ("/help", "Show available commands"),
     ("/exit", "Quit"),

@@ -75,45 +75,8 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
 
     if cmd_name == "admin":
         state.current_mode = "admin"
-        state.console.print("[bold cyan]Admin mode.[/bold cyan] Manage langosh-server.")
+        state.console.print("[bold cyan]Admin mode.[/bold cyan]")
         state.console.print("[dim]Type /help for commands, /home to return.[/dim]")
-        return "continue"
-
-    if cmd_name == "server":
-        import asyncio
-
-        from ..agents import server_client
-        from ..settings import DEFAULT_SERVER_URL, get_server_url
-        from ..settings import set as set_setting
-
-        new_url = parts[1].strip() if len(parts) > 1 else None
-
-        if new_url:
-            # Light validation; allow http/https only.
-            if not (new_url.startswith("http://") or new_url.startswith("https://")):
-                state.console.print(
-                    f"[bold red]Invalid URL:[/bold red] {new_url} "
-                    "(must start with http:// or https://)"
-                )
-                return "continue"
-            set_setting("server_url", new_url)
-            state.console.print(f"[green]Set server_url to {new_url}[/green]")
-
-        url = get_server_url()
-        try:
-            ok = asyncio.run(server_client.health_check())
-        except Exception:
-            ok = False
-        status = "[green]reachable[/green]" if ok else "[red]unreachable[/red]"
-        from ..agents.registry import langgraph_json_path
-        from ..settings import get_agents_path
-
-        state.console.print(f"[bold]server_url[/bold] [dim]({status})[/dim]: {url}")
-        state.console.print(f"[bold]agents_path[/bold]: {get_agents_path()}")
-        state.console.print(f"[bold]langgraph.json[/bold]: {langgraph_json_path()}")
-        if url == DEFAULT_SERVER_URL and not new_url:
-            state.console.print("[dim]Using built-in default. Override with /server <url> "
-                                "or env LANGOSH_SERVER_URL.[/dim]")
         return "continue"
 
     if cmd_name == "select":
@@ -1337,87 +1300,140 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
 
     # ── admin mode commands ────────────────────────────────────────────────
 
-    if cmd_name == "info":
+    if cmd_name == "settings" and state.current_mode == "admin":
         import asyncio
 
-        from ..agents import server_client
+        import questionary
 
+        from ..agents import server_client
+        from ..settings import DEFAULT_SERVER_URL, get_api_key, get_server_url
+        from ..settings import set as set_setting
+
+        url = get_server_url()
+        api_key = get_api_key()
         try:
-            info = asyncio.run(server_client.server_info())
-        except Exception as e:
-            state.console.print(f"[bold red]Server error:[/bold red] {e}")
+            ok = asyncio.run(server_client.health_check())
+        except Exception:
+            ok = False
+        status = "[green]reachable[/green]" if ok else "[red]unreachable[/red]"
+
+        state.console.print(f"  [bold]server_url[/bold] [dim]({status})[/dim]: {url}")
+        state.console.print(f"  [bold]api_key[/bold]:    {'***' + api_key[-4:] if api_key and len(api_key) > 4 else api_key or '[not set]'}")
+
+        choices = [
+            questionary.Choice(title="← Back", value=None),
+            questionary.Choice(title="Set server URL", value="url"),
+            questionary.Choice(title="Set API key", value="key"),
+        ]
+        if api_key:
+            choices.append(questionary.Choice(title="Clear API key", value="clear_key"))
+
+        action = questionary.select("Setting:", choices=choices).ask()
+        if not action:
             return "continue"
 
-        for key, value in info.items():
-            if isinstance(value, (dict, list)):
-                import json as _json
-                state.console.print(f"  [cyan]{key}:[/cyan] {_json.dumps(value, indent=2)}")
-            else:
-                state.console.print(f"  [cyan]{key}:[/cyan] {value}")
+        if action == "url":
+            new_url = questionary.text("Server URL:", default=url).ask()
+            if new_url and new_url.strip():
+                new_url = new_url.strip()
+                if not (new_url.startswith("http://") or new_url.startswith("https://")):
+                    state.console.print("[bold red]Invalid URL[/bold red] (must start with http:// or https://)")
+                else:
+                    set_setting("server_url", new_url)
+                    state.console.print(f"[green]Set server_url to {new_url}[/green]")
+
+        elif action == "key":
+            new_key = questionary.password("API key:").ask()
+            if new_key and new_key.strip():
+                set_setting("api_key", new_key.strip())
+                state.console.print("[green]API key saved.[/green]")
+
+        elif action == "clear_key":
+            from ..settings import delete as del_setting
+            del_setting("api_key")
+            state.console.print("[green]API key cleared.[/green]")
+
         return "continue"
 
-    if cmd_name == "reload" and state.current_mode == "admin":
-        import asyncio
-
-        from ..agents import server_client
-
-        try:
-            result = asyncio.run(server_client.reload_agents())
-            state.console.print("[green]Agents reloaded on server.[/green]")
-            if isinstance(result, dict):
-                sha = result.get("sha", "")[:7]
-                prev = result.get("prev_sha", "")[:7]
-                if sha and prev:
-                    state.console.print(f"  [dim]{prev} → {sha}[/dim]")
-                commits = result.get("commits", [])
-                for c in commits:
-                    csha = c.get("sha", "")[:7]
-                    msg = c.get("message", "")
-                    author = c.get("author", "")
-                    state.console.print(f"  [cyan]{csha}[/cyan] {msg} [dim]({author})[/dim]")
-                graphs = result.get("graphs", [])
-                if graphs:
-                    state.console.print(f"  [dim]Graphs: {', '.join(graphs)}[/dim]")
-        except Exception as e:
-            state.console.print(f"[bold red]Error:[/bold red] {e}")
-        return "continue"
-
-    if cmd_name == "keys" and state.current_mode == "admin":
-        import asyncio
-
-        from ..agents import server_client
-
-        try:
-            keys = asyncio.run(server_client.list_api_keys())
-        except Exception as e:
-            state.console.print(f"[bold red]Error:[/bold red] {e}")
-            return "continue"
-
-        if not keys:
-            state.console.print("[dim]No API keys configured.[/dim]")
-        else:
-            for k in keys:
-                name = k.get("name", "unnamed")
-                created = k.get("created_at", "")
-                short_key = k.get("key", k.get("api_key", ""))
-                if isinstance(short_key, str) and len(short_key) > 12:
-                    short_key = short_key[:8] + "..."
-                state.console.print(f"  [cyan]{name}[/cyan] — {short_key} [dim]({created})[/dim]")
-        return "continue"
-
-    if cmd_name == "key" and state.current_mode == "admin":
+    if cmd_name == "server" and state.current_mode == "admin":
         import asyncio
 
         import questionary
 
         from ..agents import server_client
 
-        sub = parts[1].strip().split(None, 1) if len(parts) > 1 else []
-        sub_cmd = sub[0].lower() if sub else ""
-        sub_arg = sub[1].strip() if len(sub) > 1 else ""
+        _BACK = "__back__"
 
-        if sub_cmd == "create":
-            name = sub_arg or questionary.text("Key name:").ask()
+        choices = [
+            questionary.Choice(title="← Back", value=_BACK),
+            questionary.Choice(title="Info — server version, graphs, status", value="info"),
+            questionary.Choice(title="Reload — hot-reload agents", value="reload"),
+            questionary.Choice(title="Config — view and edit server configuration", value="config"),
+            questionary.Choice(title="Keys — list API keys", value="keys"),
+            questionary.Choice(title="Key create — create an API key", value="key_create"),
+            questionary.Choice(title="Key delete — delete an API key", value="key_delete"),
+            questionary.Choice(title="Key rotate — rotate an API key", value="key_rotate"),
+        ]
+        action = questionary.select("Server:", choices=choices).ask()
+        if not action or action == _BACK:
+            return "continue"
+
+        if action == "info":
+            try:
+                info = asyncio.run(server_client.server_info())
+            except Exception as e:
+                state.console.print(f"[bold red]Server error:[/bold red] {e}")
+                return "continue"
+            for key, value in info.items():
+                if isinstance(value, (dict, list)):
+                    import json as _json
+                    state.console.print(f"  [cyan]{key}:[/cyan] {_json.dumps(value, indent=2)}")
+                else:
+                    state.console.print(f"  [cyan]{key}:[/cyan] {value}")
+            return "continue"
+
+        if action == "reload":
+            try:
+                result = asyncio.run(server_client.reload_agents())
+                state.console.print("[green]Agents reloaded on server.[/green]")
+                if isinstance(result, dict):
+                    sha = result.get("sha", "")[:7]
+                    prev = result.get("prev_sha", "")[:7]
+                    if sha and prev:
+                        state.console.print(f"  [dim]{prev} → {sha}[/dim]")
+                    commits = result.get("commits", [])
+                    for c in commits:
+                        csha = c.get("sha", "")[:7]
+                        msg = c.get("message", "")
+                        author = c.get("author", "")
+                        state.console.print(f"  [cyan]{csha}[/cyan] {msg} [dim]({author})[/dim]")
+                    graphs = result.get("graphs", [])
+                    if graphs:
+                        state.console.print(f"  [dim]Graphs: {', '.join(graphs)}[/dim]")
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        if action == "keys":
+            try:
+                keys = asyncio.run(server_client.list_api_keys())
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
+                return "continue"
+            if not keys:
+                state.console.print("[dim]No API keys configured.[/dim]")
+            else:
+                for k in keys:
+                    name = k.get("name", "unnamed")
+                    created = k.get("created_at", "")
+                    short_key = k.get("key", k.get("api_key", ""))
+                    if isinstance(short_key, str) and len(short_key) > 12:
+                        short_key = short_key[:8] + "..."
+                    state.console.print(f"  [cyan]{name}[/cyan] — {short_key} [dim]({created})[/dim]")
+            return "continue"
+
+        if action == "key_create":
+            name = questionary.text("Key name:").ask()
             if not name or not name.strip():
                 state.console.print("[dim]Cancelled.[/dim]")
                 return "continue"
@@ -1429,9 +1445,10 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
                 state.console.print("[dim]Save this key — it won't be shown again.[/dim]")
             except Exception as e:
                 state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
 
-        elif sub_cmd == "delete":
-            name = sub_arg or questionary.text("Key name to delete:").ask()
+        if action == "key_delete":
+            name = questionary.text("Key name to delete:").ask()
             if not name or not name.strip():
                 state.console.print("[dim]Cancelled.[/dim]")
                 return "continue"
@@ -1442,9 +1459,10 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
                     state.console.print(f"[green]Deleted API key '{name.strip()}'.[/green]")
                 except Exception as e:
                     state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
 
-        elif sub_cmd == "rotate":
-            name = sub_arg or questionary.text("Key name to rotate:").ask()
+        if action == "key_rotate":
+            name = questionary.text("Key name to rotate:").ask()
             if not name or not name.strip():
                 state.console.print("[dim]Cancelled.[/dim]")
                 return "continue"
@@ -1458,206 +1476,175 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
                     state.console.print("[dim]Save this key — the old one is now invalid.[/dim]")
                 except Exception as e:
                     state.console.print(f"[bold red]Error:[/bold red] {e}")
-
-        else:
-            state.console.print(
-                "[dim]Usage: /key create <name> | /key delete <name> | /key rotate <name>[/dim]"
-            )
-        return "continue"
-
-    if cmd_name == "config" and state.current_mode == "admin":
-        import asyncio
-
-        import questionary
-
-        from ..agents import server_client
-
-        # Fetch schema and current values
-        try:
-            schema = asyncio.run(server_client.get_config_schema())
-            current = asyncio.run(server_client.list_config())
-        except Exception as e:
-            state.console.print(f"[bold red]Error:[/bold red] {e}")
             return "continue"
 
-        # Index current values by key
-        current_by_key = {v["key"]: v.get("value", "") for v in current}
+        if action == "config":
+            try:
+                schema = asyncio.run(server_client.get_config_schema())
+                current = asyncio.run(server_client.list_config())
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
+                return "continue"
 
-        # Group schema by category
-        categories: dict[str, list[dict]] = {}
-        for s in schema:
-            categories.setdefault(s["category"], []).append(s)
+            current_by_key = {v["key"]: v.get("value", "") for v in current}
+            categories: dict[str, list[dict]] = {}
+            for s in schema:
+                categories.setdefault(s["category"], []).append(s)
 
-        _BACK = "__back__"
-        _WIZARD = "__wizard__"
-        _RESET = "__reset__"
-        _SHOW = "__show__"
+            _WIZARD = "__wizard__"
+            _RESET = "__reset__"
+            _SHOW = "__show__"
 
-        # ── Wizard: step through all params ─────────────────────────────
-        def _run_wizard():
-            changed = 0
-            for cat, params in categories.items():
-                state.console.print(f"\n[bold]{cat}[/bold]")
-                for s in params:
-                    key = s["key"]
-                    cur_val = current_by_key.get(key)
-                    encrypted = s.get("encrypted", False)
-
-                    # Show current state
-                    if cur_val is not None and encrypted:
-                        status = f"{cur_val[:4]}..."
-                    elif cur_val is not None:
-                        status = cur_val
-                    else:
-                        status = "[not set]"
-                    state.console.print(f"  [cyan]{key}[/cyan] = {status}")
-                    state.console.print(f"  [dim]{s['description']}[/dim]")
-
-                    if encrypted:
-                        value = questionary.password(
-                            f"  {key} (Enter to skip):"
-                        ).ask()
-                    else:
-                        value = questionary.text(
-                            f"  {key}:",
-                            default=cur_val or "",
-                        ).ask()
-
-                    if value is None:
-                        state.console.print("[dim]Wizard cancelled.[/dim]")
-                        return changed
-
-                    value = value.strip()
-                    if not value and cur_val is None:
-                        continue  # skip — was not set, still not set
-                    if not value and cur_val is not None:
-                        # Clear existing value
+            def _run_wizard():
+                changed = 0
+                for cat, params in categories.items():
+                    state.console.print(f"\n[bold]{cat}[/bold]")
+                    for s in params:
+                        key = s["key"]
+                        cur_val = current_by_key.get(key)
+                        encrypted = s.get("encrypted", False)
+                        if cur_val is not None and encrypted:
+                            disp = f"{cur_val[:4]}..."
+                        elif cur_val is not None:
+                            disp = cur_val
+                        else:
+                            disp = "[not set]"
+                        state.console.print(f"  [cyan]{key}[/cyan] = {disp}")
+                        state.console.print(f"  [dim]{s['description']}[/dim]")
+                        if encrypted:
+                            value = questionary.password(f"  {key} (Enter to skip):").ask()
+                        else:
+                            value = questionary.text(f"  {key}:", default=cur_val or "").ask()
+                        if value is None:
+                            state.console.print("[dim]Wizard cancelled.[/dim]")
+                            return changed
+                        value = value.strip()
+                        if not value and cur_val is None:
+                            continue
+                        if not value and cur_val is not None:
+                            try:
+                                asyncio.run(server_client.delete_config(cat, key))
+                                current_by_key.pop(key, None)
+                                changed += 1
+                                state.console.print(f"  [green]Cleared.[/green]")
+                            except Exception as e:
+                                state.console.print(f"  [bold red]Error:[/bold red] {e}")
+                            continue
+                        if value == cur_val:
+                            continue
                         try:
-                            asyncio.run(server_client.delete_config(cat, key))
-                            current_by_key.pop(key, None)
+                            asyncio.run(server_client.set_config(cat, key, value))
+                            current_by_key[key] = value
                             changed += 1
-                            state.console.print(f"  [green]Cleared.[/green]")
+                            state.console.print(f"  [green]Set.[/green]")
                         except Exception as e:
                             state.console.print(f"  [bold red]Error:[/bold red] {e}")
-                        continue
-                    if value == cur_val:
-                        continue  # unchanged
-                    try:
-                        asyncio.run(server_client.set_config(cat, key, value))
-                        current_by_key[key] = value
-                        changed += 1
-                        state.console.print(f"  [green]Set.[/green]")
-                    except Exception as e:
-                        state.console.print(f"  [bold red]Error:[/bold red] {e}")
-
-            return changed
-
-        # ── Interactive: pick category → param → action ─────────────────
-        while True:
-            cat_choices = [
-                questionary.Choice(title="← Back", value=_BACK),
-                questionary.Choice(title="Show all config", value=_SHOW),
-                questionary.Choice(title="Setup wizard (step through all)", value=_WIZARD),
-                questionary.Choice(title="Reset all config", value=_RESET),
-            ]
-            cat_choices += [
-                questionary.Choice(
-                    title=f"{cat}  ({len(params)} params)",
-                    value=cat,
-                )
-                for cat, params in categories.items()
-            ]
-            cat = questionary.select("Category:", choices=cat_choices).ask()
-            if not cat or cat == _BACK:
-                return "continue"
-
-            if cat == _SHOW:
-                current_cat = ""
-                for s in schema:
-                    if s["category"] != current_cat:
-                        current_cat = s["category"]
-                        state.console.print(f"\n  [bold]{current_cat}[/bold]")
-                    key = s["key"]
-                    val = current_by_key.get(key)
-                    if val is None:
-                        state.console.print(f"    [cyan]{key}[/cyan] [dim][not set][/dim]")
-                    elif s.get("encrypted") and val:
-                        state.console.print(f"    [cyan]{key}[/cyan] = {val[:4]}...")
-                    else:
-                        state.console.print(f"    [cyan]{key}[/cyan] = {val}")
-                state.console.print()
-                continue  # back to menu
-
-            if cat == _WIZARD:
-                n = _run_wizard()
-                state.console.print(f"\n[green]Wizard complete.[/green] [dim]{n} value(s) changed.[/dim]")
-                return "continue"
-
-            if cat == _RESET:
-                confirm = questionary.confirm(
-                    "Reset all config? Values revert to env-var fallbacks.", default=False
-                ).ask()
-                if confirm:
-                    try:
-                        asyncio.run(server_client.reset_config())
-                        current_by_key.clear()
-                        state.console.print("[green]All config values reset.[/green]")
-                    except Exception as e:
-                        state.console.print(f"[bold red]Error:[/bold red] {e}")
-                return "continue"
+                return changed
 
             while True:
-                param_choices = [questionary.Choice(title="← Back", value=_BACK)]
-                for s in categories[cat]:
-                    k = s["key"]
-                    val = current_by_key.get(k)
-                    if val is None:
-                        label = f"{k}  [not set]"
-                    elif s.get("encrypted") and val:
-                        label = f"{k} = {val[:4]}..."
-                    else:
-                        label = f"{k} = {val}"
-                    param_choices.append(questionary.Choice(title=label, value=s))
+                cat_choices = [
+                    questionary.Choice(title="← Back", value=_BACK),
+                    questionary.Choice(title="Show all config", value=_SHOW),
+                    questionary.Choice(title="Setup wizard (step through all)", value=_WIZARD),
+                    questionary.Choice(title="Reset all config", value=_RESET),
+                ]
+                cat_choices += [
+                    questionary.Choice(title=f"{cat}  ({len(params)} params)", value=cat)
+                    for cat, params in categories.items()
+                ]
+                cat = questionary.select("Category:", choices=cat_choices).ask()
+                if not cat or cat == _BACK:
+                    return "continue"
 
-                picked = questionary.select("Parameter:", choices=param_choices).ask()
-                if not picked or picked == _BACK:
-                    break
-
-                key = picked["key"]
-                cur_val = current_by_key.get(key)
-                state.console.print(f"[dim]{picked['description']}[/dim]")
-
-                actions = ["Set value"]
-                if cur_val is not None:
-                    actions.append("Clear value")
-                actions.append("← Back")
-                action = questionary.select("Action:", choices=actions).ask()
-
-                if not action or action == "← Back":
+                if cat == _SHOW:
+                    current_cat = ""
+                    for s in schema:
+                        if s["category"] != current_cat:
+                            current_cat = s["category"]
+                            state.console.print(f"\n  [bold]{current_cat}[/bold]")
+                        key = s["key"]
+                        val = current_by_key.get(key)
+                        if val is None:
+                            state.console.print(f"    [cyan]{key}[/cyan] [dim][not set][/dim]")
+                        elif s.get("encrypted") and val:
+                            state.console.print(f"    [cyan]{key}[/cyan] = {val[:4]}...")
+                        else:
+                            state.console.print(f"    [cyan]{key}[/cyan] = {val}")
+                    state.console.print()
                     continue
 
-                if action == "Clear value":
+                if cat == _WIZARD:
+                    n = _run_wizard()
+                    state.console.print(f"\n[green]Wizard complete.[/green] [dim]{n} value(s) changed.[/dim]")
+                    return "continue"
+
+                if cat == _RESET:
+                    confirm = questionary.confirm(
+                        "Reset all config? Values revert to env-var fallbacks.", default=False
+                    ).ask()
+                    if confirm:
+                        try:
+                            asyncio.run(server_client.reset_config())
+                            current_by_key.clear()
+                            state.console.print("[green]All config values reset.[/green]")
+                        except Exception as e:
+                            state.console.print(f"[bold red]Error:[/bold red] {e}")
+                    return "continue"
+
+                while True:
+                    param_choices = [questionary.Choice(title="← Back", value=_BACK)]
+                    for s in categories[cat]:
+                        k = s["key"]
+                        val = current_by_key.get(k)
+                        if val is None:
+                            label = f"{k}  [not set]"
+                        elif s.get("encrypted") and val:
+                            label = f"{k} = {val[:4]}..."
+                        else:
+                            label = f"{k} = {val}"
+                        param_choices.append(questionary.Choice(title=label, value=s))
+
+                    picked = questionary.select("Parameter:", choices=param_choices).ask()
+                    if not picked or picked == _BACK:
+                        break
+
+                    key = picked["key"]
+                    cur_val = current_by_key.get(key)
+                    state.console.print(f"[dim]{picked['description']}[/dim]")
+
+                    actions = ["Set value"]
+                    if cur_val is not None:
+                        actions.append("Clear value")
+                    actions.append("← Back")
+                    action = questionary.select("Action:", choices=actions).ask()
+
+                    if not action or action == "← Back":
+                        continue
+
+                    if action == "Clear value":
+                        try:
+                            asyncio.run(server_client.delete_config(picked["category"], key))
+                            current_by_key.pop(key, None)
+                            state.console.print(f"[green]Cleared {key}.[/green]")
+                        except Exception as e:
+                            state.console.print(f"[bold red]Error:[/bold red] {e}")
+                        continue
+
+                    if picked.get("encrypted"):
+                        value = questionary.password(f"{key}:").ask()
+                    else:
+                        value = questionary.text(f"{key}:", default=cur_val or "").ask()
+                    if value is None:
+                        continue
+
                     try:
-                        asyncio.run(server_client.delete_config(picked["category"], key))
-                        current_by_key.pop(key, None)
-                        state.console.print(f"[green]Cleared {key}.[/green]")
+                        asyncio.run(server_client.set_config(picked["category"], key, value))
+                        current_by_key[key] = value
+                        state.console.print(f"[green]Set {key}.[/green]")
                     except Exception as e:
                         state.console.print(f"[bold red]Error:[/bold red] {e}")
-                    continue
 
-                if picked.get("encrypted"):
-                    value = questionary.password(f"{key}:").ask()
-                else:
-                    value = questionary.text(f"{key}:", default=cur_val or "").ask()
-                if value is None:
-                    continue
-
-                try:
-                    asyncio.run(server_client.set_config(picked["category"], key, value))
-                    current_by_key[key] = value
-                    state.console.print(f"[green]Set {key}.[/green]")
-                except Exception as e:
-                    state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
 
         return "continue"
 
