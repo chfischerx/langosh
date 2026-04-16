@@ -88,7 +88,12 @@ def _emit_context_schema(context: dict) -> tuple[str, list[str]]:
 
 
 def _compile_simple_source(definition: dict, graph_id: str) -> str:
-    """Generate Python source for a simple ReAct-style agent."""
+    """Generate Python source for a simple ReAct-style agent.
+
+    Emits an **uncompiled** StateGraph so the server can attach its own
+    checkpointer for thread persistence.  The graph follows the standard
+    ReAct loop: agent → should_continue → tools → agent.
+    """
     system_prompt = definition.get("system_prompt", "You are a helpful assistant.")
     tool_names: list[str] = definition.get("tools", [])
     pinned_model = definition.get("model")
@@ -97,6 +102,7 @@ def _compile_simple_source(definition: dict, graph_id: str) -> str:
     tool_imports, tool_symbols = _resolve_tool_imports(tool_names)
     tools_arg = "[" + ", ".join(tool_symbols) + "]"
     imports_block = "\n".join(tool_imports)
+    safe_prompt = system_prompt.replace('"""', "'''")
 
     header = (
         f'"""{graph_id} — generated from definition.json.\n'
@@ -107,58 +113,96 @@ def _compile_simple_source(definition: dict, graph_id: str) -> str:
         f'"""\n'
     )
 
-    if context:
-        # Context-aware: use create_agent with middleware for dynamic model + prompt
-        ctx_src, ctx_imports = _emit_context_schema(context)
-        safe_prompt = system_prompt.replace('"""', "'''")
+    # Common imports for the uncompiled ReAct pattern
+    core_imports = [
+        "from typing import Annotated, TypedDict",
+        "",
+        "from langchain.chat_models import init_chat_model",
+        "from langchain_core.messages import AIMessage, AnyMessage, SystemMessage",
+        "from langgraph.graph import END, START, StateGraph",
+        "from langgraph.graph.message import add_messages",
+        "from langgraph.prebuilt import ToolNode",
+    ]
 
-        import_lines = ctx_imports + [
-            "from langchain.agents import create_agent",
-            "from langchain.agents.middleware import dynamic_prompt, ModelRequest",
-            "from langchain.chat_models import init_chat_model",
-        ]
+    state_class = (
+        "class State(TypedDict):\n"
+        "    messages: Annotated[list[AnyMessage], add_messages]\n"
+    )
+
+    should_continue_fn = (
+        "def should_continue(state: State) -> str:\n"
+        '    last = state["messages"][-1]\n'
+        "    if isinstance(last, AIMessage) and last.tool_calls:\n"
+        '        return "tools"\n'
+        "    return END\n"
+    )
+
+    graph_body = (
+        f'_builder.add_node("agent", agent)\n'
+        f'_builder.add_node("tools", ToolNode({tools_arg}))\n'
+        f'_builder.add_edge(START, "agent")\n'
+        f'_builder.add_conditional_edges("agent", should_continue, ["tools", END])\n'
+        f'_builder.add_edge("tools", "agent")\n'
+        f"graph = _builder\n"
+    )
+
+    if context:
+        ctx_src, ctx_imports = _emit_context_schema(context)
+        import_lines = ctx_imports + core_imports
         if imports_block:
             import_lines.append(imports_block)
 
-        return (
-            f"{header}\n"
-            f"{chr(10).join(import_lines)}\n"
-            f"\n\n"
-            f"{ctx_src}\n"
-            f"\n"
-            f"def _select_model(state, runtime: Runtime[ContextSchema]):\n"
-            f"    return init_chat_model(runtime.context.model_name)\n"
-            f"\n\n"
-            f"@dynamic_prompt\n"
-            f"def _resolve_prompt(request: ModelRequest) -> str:\n"
-            f"    return request.runtime.context.system_prompt\n"
-            f"\n\n"
-            f"graph = create_agent(\n"
-            f"    model=_select_model,\n"
-            f"    tools={tools_arg},\n"
-            f"    middleware=[_resolve_prompt],\n"
-            f"    context_schema=ContextSchema,\n"
-            f")\n"
+        agent_fn = (
+            f"async def agent(state: State, runtime: Runtime[ContextSchema]) -> dict:\n"
+            f"    model = init_chat_model(runtime.context.model_name)\n"
+            f"    bound = model.bind_tools({tools_arg})\n"
+            f"    system = SystemMessage(content=runtime.context.system_prompt)\n"
+            f'    response = await bound.ainvoke([system] + state["messages"])\n'
+            f'    return {{"messages": [response]}}\n'
         )
-    else:
-        # No context: backward-compatible static output
-        safe_prompt = system_prompt.replace('"""', "'''")
-        os_import, default_line = _model_lines(pinned_model)
+
+        builder_line = "_builder = StateGraph(State, context_schema=ContextSchema)\n"
 
         return (
             f"{header}\n"
-            f"{os_import}"
-            f"from langgraph.prebuilt import create_react_agent\n"
-            f"{imports_block}\n"
-            f"\n"
-            f"{default_line}\n"
-            f'SYSTEM_PROMPT = """{safe_prompt}"""\n'
-            f"\n"
-            f"graph = create_react_agent(\n"
-            f"    model=DEFAULT_MODEL,\n"
-            f"    tools={tools_arg},\n"
-            f"    prompt=SYSTEM_PROMPT,\n"
-            f")\n"
+            + "\n".join(import_lines) + "\n"
+            + f"\n\n{ctx_src}\n"
+            + f"\n{state_class}\n"
+            + f"\n{agent_fn}\n"
+            + f"\n{should_continue_fn}\n"
+            + f"\n{builder_line}"
+            + graph_body
+        )
+    else:
+        os_import, default_line = _model_lines(pinned_model)
+        import_lines = []
+        if os_import:
+            import_lines.append(os_import.rstrip())
+        import_lines.extend(core_imports)
+        if imports_block:
+            import_lines.append(imports_block)
+
+        agent_fn = (
+            f"async def agent(state: State) -> dict:\n"
+            f"    model = init_chat_model(DEFAULT_MODEL)\n"
+            f"    bound = model.bind_tools({tools_arg})\n"
+            f"    system = SystemMessage(content=SYSTEM_PROMPT)\n"
+            f'    response = await bound.ainvoke([system] + state["messages"])\n'
+            f'    return {{"messages": [response]}}\n'
+        )
+
+        builder_line = "_builder = StateGraph(State)\n"
+
+        return (
+            f"{header}\n"
+            + "\n".join(import_lines) + "\n"
+            + f"\n{default_line}\n"
+            + f'SYSTEM_PROMPT = """{safe_prompt}"""\n'
+            + f"\n\n{state_class}\n"
+            + f"\n{agent_fn}\n"
+            + f"\n{should_continue_fn}\n"
+            + f"\n{builder_line}"
+            + graph_body
         )
 
 
