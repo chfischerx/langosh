@@ -1136,74 +1136,78 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
         for s in schema:
             categories.setdefault(s["category"], []).append(s)
 
-        # Step 1: pick a category
-        cat_choices = [
-            questionary.Choice(
-                title=f"{cat}  ({len(params)} params)",
-                value=cat,
-            )
-            for cat, params in categories.items()
-        ]
-        cat = questionary.select("Category:", choices=cat_choices).ask()
-        if not cat:
-            state.console.print("[dim]Cancelled.[/dim]")
-            return "continue"
+        _BACK = "__back__"
 
-        # Step 2: show params in category, pick one
-        param_choices = []
-        for s in categories[cat]:
-            key = s["key"]
-            val = current_by_key.get(key)
-            if val is None:
-                label = f"{key}  [not set]"
-            elif s.get("encrypted") and val:
-                label = f"{key} = {val[:4]}..."
-            else:
-                label = f"{key} = {val}"
-            param_choices.append(questionary.Choice(title=label, value=s))
+        while True:
+            # Step 1: pick a category
+            cat_choices = [
+                questionary.Choice(
+                    title=f"{cat}  ({len(params)} params)",
+                    value=cat,
+                )
+                for cat, params in categories.items()
+            ]
+            cat_choices.append(questionary.Choice(title="← Back", value=_BACK))
+            cat = questionary.select("Category:", choices=cat_choices).ask()
+            if not cat or cat == _BACK:
+                return "continue"
 
-        picked = questionary.select("Parameter:", choices=param_choices).ask()
-        if not picked:
-            state.console.print("[dim]Cancelled.[/dim]")
-            return "continue"
+            # Step 2: pick a parameter (loop so Back returns to category)
+            while True:
+                param_choices = []
+                for s in categories[cat]:
+                    k = s["key"]
+                    val = current_by_key.get(k)
+                    if val is None:
+                        label = f"{k}  [not set]"
+                    elif s.get("encrypted") and val:
+                        label = f"{k} = {val[:4]}..."
+                    else:
+                        label = f"{k} = {val}"
+                    param_choices.append(questionary.Choice(title=label, value=s))
+                param_choices.append(questionary.Choice(title="← Back", value=_BACK))
 
-        key = picked["key"]
-        cur_val = current_by_key.get(key)
-        state.console.print(f"[dim]{picked['description']}[/dim]")
+                picked = questionary.select("Parameter:", choices=param_choices).ask()
+                if not picked or picked == _BACK:
+                    break  # back to category selection
 
-        # Step 3: action — set or clear
-        actions = ["Set value"]
-        if cur_val is not None:
-            actions.append("Clear value")
-        actions.append("Cancel")
-        action = questionary.select("Action:", choices=actions).ask()
+                key = picked["key"]
+                cur_val = current_by_key.get(key)
+                state.console.print(f"[dim]{picked['description']}[/dim]")
 
-        if not action or action == "Cancel":
-            state.console.print("[dim]Cancelled.[/dim]")
-            return "continue"
+                # Step 3: action
+                actions = ["Set value"]
+                if cur_val is not None:
+                    actions.append("Clear value")
+                actions.append("← Back")
+                action = questionary.select("Action:", choices=actions).ask()
 
-        if action == "Clear value":
-            try:
-                asyncio.run(server_client.delete_config(picked["category"], key))
-                state.console.print(f"[green]Cleared {key}.[/green]")
-            except Exception as e:
-                state.console.print(f"[bold red]Error:[/bold red] {e}")
-            return "continue"
+                if not action or action == "← Back":
+                    continue  # back to parameter selection
 
-        # Set value — password input for encrypted keys
-        if picked.get("encrypted"):
-            value = questionary.password(f"{key}:").ask()
-        else:
-            value = questionary.text(f"{key}:", default=cur_val or "").ask()
-        if value is None:
-            state.console.print("[dim]Cancelled.[/dim]")
-            return "continue"
+                if action == "Clear value":
+                    try:
+                        asyncio.run(server_client.delete_config(picked["category"], key))
+                        current_by_key.pop(key, None)
+                        state.console.print(f"[green]Cleared {key}.[/green]")
+                    except Exception as e:
+                        state.console.print(f"[bold red]Error:[/bold red] {e}")
+                    continue
 
-        try:
-            asyncio.run(server_client.set_config(picked["category"], key, value))
-            state.console.print(f"[green]Set {key}.[/green]")
-        except Exception as e:
-            state.console.print(f"[bold red]Error:[/bold red] {e}")
+                # Set value — password input for encrypted keys
+                if picked.get("encrypted"):
+                    value = questionary.password(f"{key}:").ask()
+                else:
+                    value = questionary.text(f"{key}:", default=cur_val or "").ask()
+                if value is None:
+                    continue  # back to parameter selection
+
+                try:
+                    asyncio.run(server_client.set_config(picked["category"], key, value))
+                    current_by_key[key] = value
+                    state.console.print(f"[green]Set {key}.[/green]")
+                except Exception as e:
+                    state.console.print(f"[bold red]Error:[/bold red] {e}")
 
         return "continue"
 
