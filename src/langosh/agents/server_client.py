@@ -280,3 +280,42 @@ async def rotate_api_key(name: str) -> dict:
         r = await http.post(f"{_base_url()}/admin/keys/{name}/rotate")
         r.raise_for_status()
         return r.json()
+
+
+# ── config endpoints ────────────────────────────────────────────────────────
+
+
+async def get_config_schema() -> list[dict]:
+    """GET /admin/config/schema — all supported config params."""
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+        r = await http.get(f"{_base_url()}/admin/config/schema")
+        r.raise_for_status()
+        return r.json()
+
+
+async def list_config(category: str | None = None) -> list[dict]:
+    """GET /admin/config or /admin/config/{category}."""
+    path = f"/admin/config/{category}" if category else "/admin/config"
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+        r = await http.get(f"{_base_url()}{path}")
+        r.raise_for_status()
+        return r.json()
+
+
+async def set_config(category: str, key: str, value: str) -> dict:
+    """PUT /admin/config/{category} — set a config value."""
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+        r = await http.put(
+            f"{_base_url()}/admin/config/{category}",
+            json={"key": key, "value": value},
+        )
+        r.raise_for_status()
+        return r.json()
+
+
+async def delete_config(category: str, key: str) -> dict:
+    """DELETE /admin/config/{category}/{key} — remove a config value."""
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
+        r = await http.delete(f"{_base_url()}/admin/config/{category}/{key}")
+        r.raise_for_status()
+        return r.json()

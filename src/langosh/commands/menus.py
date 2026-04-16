@@ -85,6 +85,7 @@ ADMIN_COMMANDS_MENU = [
     ("/server", "Show or set the langosh-server URL"),
     ("/info", "Show server info (version, graphs, status)"),
     ("/reload", "Hot-reload agents on the server"),
+    ("/config", "View and edit server configuration"),
     ("/keys", "List API keys"),
     ("/key", "Manage API keys (create, delete, rotate)"),
     ("/home", "Return to home"),

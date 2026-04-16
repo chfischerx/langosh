@@ -1113,6 +1113,100 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             )
         return "continue"
 
+    if cmd_name == "config" and state.current_mode == "admin":
+        import asyncio
+
+        import questionary
+
+        from ..agents import server_client
+
+        # Fetch schema and current values
+        try:
+            schema = asyncio.run(server_client.get_config_schema())
+            current = asyncio.run(server_client.list_config())
+        except Exception as e:
+            state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        # Index current values by key
+        current_by_key = {v["key"]: v.get("value", "") for v in current}
+
+        # Group schema by category
+        categories: dict[str, list[dict]] = {}
+        for s in schema:
+            categories.setdefault(s["category"], []).append(s)
+
+        # Step 1: pick a category
+        cat_choices = [
+            questionary.Choice(
+                title=f"{cat}  ({len(params)} params)",
+                value=cat,
+            )
+            for cat, params in categories.items()
+        ]
+        cat = questionary.select("Category:", choices=cat_choices).ask()
+        if not cat:
+            state.console.print("[dim]Cancelled.[/dim]")
+            return "continue"
+
+        # Step 2: show params in category, pick one
+        param_choices = []
+        for s in categories[cat]:
+            key = s["key"]
+            val = current_by_key.get(key)
+            if val is None:
+                label = f"{key}  [not set]"
+            elif s.get("encrypted") and val:
+                label = f"{key} = {val[:4]}..."
+            else:
+                label = f"{key} = {val}"
+            param_choices.append(questionary.Choice(title=label, value=s))
+
+        picked = questionary.select("Parameter:", choices=param_choices).ask()
+        if not picked:
+            state.console.print("[dim]Cancelled.[/dim]")
+            return "continue"
+
+        key = picked["key"]
+        cur_val = current_by_key.get(key)
+        state.console.print(f"[dim]{picked['description']}[/dim]")
+
+        # Step 3: action — set or clear
+        actions = ["Set value"]
+        if cur_val is not None:
+            actions.append("Clear value")
+        actions.append("Cancel")
+        action = questionary.select("Action:", choices=actions).ask()
+
+        if not action or action == "Cancel":
+            state.console.print("[dim]Cancelled.[/dim]")
+            return "continue"
+
+        if action == "Clear value":
+            try:
+                asyncio.run(server_client.delete_config(picked["category"], key))
+                state.console.print(f"[green]Cleared {key}.[/green]")
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        # Set value — password input for encrypted keys
+        if picked.get("encrypted"):
+            value = questionary.password(f"{key}:").ask()
+        else:
+            value = questionary.text(f"{key}:", default=cur_val or "").ask()
+        if value is None:
+            state.console.print("[dim]Cancelled.[/dim]")
+            return "continue"
+
+        try:
+            asyncio.run(server_client.set_config(picked["category"], key, value))
+            state.console.print(f"[green]Set {key}.[/green]")
+        except Exception as e:
+            state.console.print(f"[bold red]Error:[/bold red] {e}")
+
+        return "continue"
+
     if cmd_name in ("back", "home"):
         state.current_mode = "main"
         state.agent_editing = False

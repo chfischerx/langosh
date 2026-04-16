@@ -6,7 +6,7 @@ import sys
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer, Completion
-from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout.containers import Float, FloatContainer, HSplit, Window
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
@@ -47,7 +47,8 @@ _agents_graph_completer = SlashCompleter(AGENTS_GRAPH_COMMANDS_MENU)
 _agent_edit_completer = SlashCompleter(AGENT_EDIT_COMMANDS_MENU)
 _admin_completer = SlashCompleter(ADMIN_COMMANDS_MENU)
 
-_history = InMemoryHistory()
+_history_path = os.path.join(os.path.expanduser("~"), ".langosh", "input_history")
+_history = FileHistory(_history_path)
 
 _style = PtStyle.from_dict({
     "separator": "fg:ansidarkgray",
@@ -151,12 +152,49 @@ def get_input() -> str | None:
 
     kb = KeyBindings()
 
+    def _has_menu(b):
+        return b.complete_state is not None
+
+    @kb.add("up")
+    def _up(event):
+        if _has_menu(buf):
+            buf.complete_previous()
+        else:
+            buf.history_backward()
+
+    @kb.add("down")
+    def _down(event):
+        if _has_menu(buf):
+            buf.complete_next()
+        else:
+            buf.history_forward()
+
+    @kb.add("tab")
+    def _tab(event):
+        if _has_menu(buf):
+            buf.complete_next()
+        else:
+            buf.start_completion()
+
+    @kb.add("s-tab")
+    def _shift_tab(event):
+        if _has_menu(buf):
+            buf.complete_previous()
+
     @kb.add("enter")
     def _accept(event):
-        text = buf.text
-        if text.strip():
-            _history.store_string(text)
-        event.app.exit(result=text)
+        if _has_menu(buf):
+            buf.complete_state = None
+        else:
+            text = buf.text
+            if text.strip():
+                buf.append_to_history()
+            event.app.exit(result=text)
+
+    @kb.add("escape")
+    def _dismiss(event):
+        if _has_menu(buf):
+            buf.complete_state = None
 
     @kb.add("c-c")
     @kb.add("c-d")
@@ -169,7 +207,37 @@ def get_input() -> str | None:
         style=_style,
         full_screen=False,
     )
-    return prompt_app.run()
+    result = prompt_app.run()
+    _trim_history()
+    return result
+
+
+_MAX_HISTORY = 100
+
+
+def _trim_history() -> None:
+    """Keep only the last _MAX_HISTORY entries in the history file."""
+    try:
+        path = _history_path
+        if not os.path.isfile(path):
+            return
+        with open(path) as f:
+            lines = f.readlines()
+        # FileHistory format: each entry is a line starting with '+' (content) or '#' (timestamp)
+        entries: list[list[str]] = []
+        current: list[str] = []
+        for line in lines:
+            if line.startswith("#") and current:
+                entries.append(current)
+                current = []
+            current.append(line)
+        if current:
+            entries.append(current)
+        if len(entries) > _MAX_HISTORY:
+            with open(path, "w") as f:
+                f.writelines(line for entry in entries[-_MAX_HISTORY:] for line in entry)
+    except OSError:
+        pass
 
 
 def erase_lines(n: int) -> None:
