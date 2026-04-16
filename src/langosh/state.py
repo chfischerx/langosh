@@ -1,8 +1,9 @@
 """Shared mutable state for the CLI application."""
 
 from rich.console import Console
+from rich.theme import Theme
 
-console = Console()
+console = Console(theme=Theme({"dim": "grey70"}))
 
 # Model catalog
 model_cache: dict = {}

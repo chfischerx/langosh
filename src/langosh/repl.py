@@ -111,11 +111,13 @@ def repl(app) -> None:
     if saved_agent_sub_mode in ("plan", "auto", "edit"):
         state.agent_sub_mode = saved_agent_sub_mode
 
-    state.console.print("[bold cyan]langosh[/bold cyan] — LangGraph agent builder")
-    name = model_display_name()
-    if name:
-        state.console.print(f"[dim]Model: {name}[/dim]")
-    state.console.print("Type [bold]/help[/bold] for commands, [bold]/exit[/bold] to quit.")
+    from .settings import get_agents_path
+
+    name = model_display_name() or "none"
+    agents_path = str(get_agents_path())
+    state.console.print("[bold white]langosh[/bold white] [dim]v0.1.0[/dim]")
+    state.console.print(f"[dim]  model: {name}[/dim]")
+    state.console.print(f"[dim]  path:  {agents_path}[/dim]")
 
     while True:
         line = get_input()

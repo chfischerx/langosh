@@ -76,17 +76,17 @@ def _mode_bar() -> str:
     """Build the top separator with mode label and active model name."""
     cols = os.get_terminal_size().columns
     if state.current_mode == "code":
-        mode_label = f"{state.current_mode}:{state.code_sub_mode}"
+        mode_label = f"code:{state.code_sub_mode}"
     elif state.current_mode == "main" and state.agent_editing:
-        mode_label = f"edit:{state.agent_sub_mode}"
+        mode_label = f"{state.active_graph_id}:edit:{state.agent_sub_mode}"
     elif state.current_mode == "main" and state.active_graph_id:
         mode_label = state.active_graph_id
+    elif state.current_mode == "main":
+        mode_label = "langosh"
     else:
         mode_label = state.current_mode
     label = f" {mode_label} "
-    if state.current_mode == "main" and state.active_graph_id and not state.agent_editing:
-        label = f" {mode_label} "
-    elif state.current_mode in ("chat", "code") and state.active_model["provider"]:
+    if state.current_mode in ("chat", "code") and state.active_model["provider"]:
         name = model_display_name()
         if name:
             label = f" {mode_label} ({name}) "
