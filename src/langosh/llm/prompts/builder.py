@@ -26,6 +26,40 @@ You can create two types of agents:
 
 **When upgrading from simple to custom**, output a complete new definition in a ```json block — this is a full restructure, not an incremental edit.
 
+## Assistant parameters (context)
+
+Agents can have multiple **assistants** — each sharing the same graph logic but running with different configuration values (model, prompt, tool settings). To support this, declare a `context` object listing configurable parameters:
+
+```json
+{{
+  "context": {{
+    "model_name": {{"type": "str", "default": "anthropic:claude-sonnet-4-5-20250929"}},
+    "system_prompt": {{"type": "str", "default": "You are a helpful assistant."}},
+    "max_search_results": {{"type": "int", "default": 5}}
+  }}
+}}
+```
+
+**Always include** `model_name` and `system_prompt` in context — they let assistants use different LLMs and have different personalities.
+
+**Include when relevant:** tool-specific settings (e.g., `max_search_results`), domain-specific values (`language`, `tone`, `output_format`), or any hardcoded value that might vary between assistants.
+
+**Don't parameterize:** graph topology (nodes/edges) or tool selection — those need a different graph, not a different assistant.
+
+When `context` is declared, codegen wires the graph to read these values at runtime. The `default` is used by the default assistant. Users can create named assistants with custom values or override per-run.
+
+For tool nodes, use `"args_from_context"` to read parameters from the assistant context instead of hardcoding them:
+```json
+{{
+  "name": "search",
+  "type": "tool",
+  "tool": "web_search",
+  "args_from_context": {{"max_results": "max_search_results"}},
+  "args_from_state": {{"query": "user_query"}},
+  "output_field": "search_results"
+}}
+```
+
 ## Type 1: Simple Agent (default)
 A simple agent has a system prompt and tools. It uses create_react_agent() internally.
 The LLM dynamically decides which tools to call and with what arguments.
@@ -34,7 +68,11 @@ The LLM dynamically decides which tools to call and with what arguments.
 {{
   "type": "simple",
   "system_prompt": "Your detailed instructions for the agent...",
-  "tools": ["web_search", "execute_python"]
+  "tools": ["web_search", "execute_python"],
+  "context": {{
+    "model_name": {{"type": "str", "default": "anthropic:claude-sonnet-4-5-20250929"}},
+    "system_prompt": {{"type": "str", "default": "Your detailed instructions for the agent..."}}
+  }}
 }}
 ```
 
@@ -175,16 +213,17 @@ Prefer `edit_function` and `edit_definition` for small changes. Only use
 
 ## CRITICAL Rules:
 1. **Default to simple.** Use `type: "simple"` unless the task clearly requires multi-step workflows or conditional branching. Do not over-engineer.
-2. EVERY node MUST have a `type` field.
-3. ALWAYS prefer `type: tool` and `type: llm` nodes over `type: function`.
-4. For `type: function` nodes, the "code" field must be a complete async Python function.
-5. Function nodes receive the full state dict and return a dict of state updates.
-6. Use __start__ and __end__ for graph entry and exit points.
-7. Custom agents MUST have a `state` object declaring all fields and their types.
-8. Output the agent definition in a ```json code block when creating new agents.
-9. When upgrading from simple to custom, output the **complete** new definition — not an incremental edit.
-10. For edits within the same type, prefer targeted tools over rewriting the full definition.
-11. Use `route_field` in conditional edges to specify which state key drives the branch.
+2. **Always include `context`** with at least `model_name` and `system_prompt` so the graph supports custom assistants.
+3. EVERY node MUST have a `type` field.
+4. ALWAYS prefer `type: tool` and `type: llm` nodes over `type: function`.
+5. For `type: function` nodes, the "code" field must be a complete async Python function.
+6. Function nodes receive the full state dict and return a dict of state updates.
+7. Use __start__ and __end__ for graph entry and exit points.
+8. Custom agents MUST have a `state` object declaring all fields and their types.
+9. Output the agent definition in a ```json code block when creating new agents.
+10. When upgrading from simple to custom, output the **complete** new definition — not an incremental edit.
+11. For edits within the same type, prefer targeted tools over rewriting the full definition.
+12. Use `route_field` in conditional edges to specify which state key drives the branch.
 """
 
 

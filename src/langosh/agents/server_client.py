@@ -57,6 +57,40 @@ async def ensure_assistant(graph_id: str, *, name: str | None = None) -> dict:
     )
 
 
+async def create_assistant(
+    graph_id: str, name: str, *, context: dict | None = None
+) -> dict:
+    """Create a new custom assistant for a graph with optional context."""
+    client = _client()
+    kwargs: dict[str, Any] = {"name": name}
+    if context:
+        kwargs["context"] = context
+    return await client.assistants.create(graph_id, **kwargs)
+
+
+async def list_graph_assistants(graph_id: str) -> list[dict]:
+    """List all assistants for a specific graph."""
+    return list(await _client().assistants.search(graph_id=graph_id, limit=100))
+
+
+async def update_assistant(
+    assistant_id: str, *, context: dict | None = None, name: str | None = None
+) -> dict:
+    """Update an assistant's context/name (creates a new version)."""
+    client = _client()
+    kwargs: dict[str, Any] = {}
+    if context is not None:
+        kwargs["context"] = context
+    if name is not None:
+        kwargs["name"] = name
+    return await client.assistants.update(assistant_id, **kwargs)
+
+
+async def delete_assistant(assistant_id: str) -> None:
+    """Delete an assistant and all its versions."""
+    await _client().assistants.delete(assistant_id)
+
+
 async def get_assistant_graph(assistant_id: str) -> dict:
     """Return the JSON node/edge structure of the assistant's graph."""
     return await _client().assistants.get_graph(assistant_id)

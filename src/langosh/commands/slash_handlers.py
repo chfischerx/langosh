@@ -123,7 +123,29 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             graph_id = choice.split(" — ")[0]
 
         try:
-            assistant = asyncio.run(server_client.ensure_assistant(graph_id))
+            # Fetch all assistants for this graph
+            assistants = asyncio.run(server_client.list_graph_assistants(graph_id))
+            if not assistants:
+                # No assistants yet — create the default
+                assistant = asyncio.run(server_client.ensure_assistant(graph_id))
+            elif len(assistants) == 1:
+                assistant = assistants[0]
+            else:
+                # Multiple assistants — let user pick
+                choices = []
+                for a in assistants:
+                    name = a.get("name", "unnamed")
+                    aid = a["assistant_id"][:8]
+                    ctx = a.get("context") or a.get("config", {}).get("configurable", {})
+                    ctx_str = ", ".join(f"{k}={v}" for k, v in ctx.items()) if ctx else "default"
+                    choices.append(f"{name} ({aid}) — {ctx_str}")
+                choice = questionary.rawselect("Select assistant:", choices=choices).ask()
+                if choice is None:
+                    state.console.print("[dim]Cancelled.[/dim]")
+                    return "continue"
+                idx = choices.index(choice)
+                assistant = assistants[idx]
+
             thread = asyncio.run(server_client.create_thread())
         except Exception as e:
             state.console.print(f"[bold red]Server error:[/bold red] {e}")
@@ -137,9 +159,11 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
         state.agent_messages.clear()
         state.agent_summary = ""
 
+        aname = assistant.get("name", graph_id)
         state.console.print(
-            f"[bold cyan]Selected: {graph_id}[/bold cyan] "
-            f"[dim](assistant {state.active_assistant_id[:8]}, thread {state.active_thread_id[:8]})[/dim]"
+            f"[bold cyan]Selected: {aname}[/bold cyan] "
+            f"[dim](graph {graph_id}, assistant {state.active_assistant_id[:8]}, "
+            f"thread {state.active_thread_id[:8]})[/dim]"
         )
         return "continue"
 
@@ -262,8 +286,19 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
             state.console.print("[red]No graph selected. Use /select first.[/red]")
             return "continue"
 
-        # Get input from argument or prompt
+        # Parse --context key=val pairs and test input
         rest = parts[1].strip() if len(parts) > 1 else ""
+        run_context: dict | None = None
+        if "--context" in rest:
+            # Split: everything before --context is ignored, everything after is key=val pairs
+            before, _, ctx_str = rest.partition("--context")
+            rest = before.strip()
+            run_context = {}
+            for pair in ctx_str.strip().split():
+                if "=" in pair:
+                    k, _, v = pair.partition("=")
+                    run_context[k] = v
+
         if not rest:
             rest = questionary.text("Test message:").ask()
             if not rest or not rest.strip():
@@ -283,13 +318,15 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
                 state.console.print(f"\n[bold red]Error:[/bold red] {data.get('message', '')}")
 
         state.agent_messages.append({"role": "user", "content": test_input})
-        state.console.print(f"\n[dim]Running on server (thread {state.active_thread_id[:8]})...[/dim]\n")
+        ctx_note = f" with context {run_context}" if run_context else ""
+        state.console.print(f"\n[dim]Running on server (thread {state.active_thread_id[:8]}){ctx_note}...[/dim]\n")
         try:
             result = asyncio.run(
                 server_client.stream_run(
                     assistant_id=state.active_assistant_id,
                     thread_id=state.active_thread_id,
                     messages=[{"role": "user", "content": test_input}],
+                    context=run_context,
                     on_event=_on_event,
                 )
             )
@@ -308,6 +345,195 @@ def handle_slash_command(cmd_name: str, parts: list[str]) -> str:
         state.agent_messages.append({"role": "assistant", "content": text})
         turns = len([m for m in state.agent_messages if m["role"] == "user"])
         state.console.print(f"\n[dim]turn {turns} | run {result.get('run_id', '?')[:8]}[/dim]")
+        return "continue"
+
+    if cmd_name == "assistants":
+        import asyncio
+
+        from ..agents import server_client
+
+        if not state.active_graph_id:
+            state.console.print("[red]No graph selected. Use /select first.[/red]")
+            return "continue"
+
+        try:
+            assistants = asyncio.run(server_client.list_graph_assistants(state.active_graph_id))
+        except Exception as e:
+            state.console.print(f"[bold red]Server error:[/bold red] {e}")
+            return "continue"
+
+        if not assistants:
+            state.console.print("[dim]No assistants for this graph.[/dim]")
+            return "continue"
+
+        for a in assistants:
+            name = a.get("name", "unnamed")
+            aid = a["assistant_id"][:8]
+            ctx = a.get("context") or a.get("config", {}).get("configurable", {})
+            active = " [bold green]← active[/bold green]" if a["assistant_id"] == state.active_assistant_id else ""
+            state.console.print(f"  [cyan]{name}[/cyan] ({aid}){active}")
+            if ctx:
+                for k, v in ctx.items():
+                    state.console.print(f"    {k}: {v}")
+        return "continue"
+
+    if cmd_name == "assistant":
+        import asyncio
+        import json as _json
+
+        import questionary
+
+        from ..agents import registry, server_client
+
+        sub = parts[1].strip().split(None, 1) if len(parts) > 1 else []
+        sub_cmd = sub[0].lower() if sub else ""
+        sub_arg = sub[1].strip() if len(sub) > 1 else ""
+
+        if not state.active_graph_id:
+            state.console.print("[red]No graph selected. Use /select first.[/red]")
+            return "continue"
+
+        if sub_cmd == "create":
+            name = sub_arg or questionary.text("Assistant name:").ask()
+            if not name or not name.strip():
+                state.console.print("[dim]Cancelled.[/dim]")
+                return "continue"
+            name = name.strip()
+
+            # Discover context schema from definition.json
+            graph_dir = registry.graph_dir(state.active_graph_id)
+            defn_path = graph_dir / "definition.json"
+            ctx_schema = {}
+            if defn_path.is_file():
+                defn = _json.loads(defn_path.read_text())
+                ctx_schema = defn.get("context", {})
+
+            context = {}
+            if ctx_schema:
+                state.console.print("[dim]Set context values (Enter to keep default):[/dim]")
+                for field, spec in ctx_schema.items():
+                    default = spec.get("default", "")
+                    val = questionary.text(f"  {field}:", default=str(default)).ask()
+                    if val is None:
+                        state.console.print("[dim]Cancelled.[/dim]")
+                        return "continue"
+                    # Try to parse as the right type
+                    ftype = spec.get("type", "str")
+                    if ftype == "int":
+                        try:
+                            context[field] = int(val)
+                        except ValueError:
+                            context[field] = val
+                    elif ftype == "float":
+                        try:
+                            context[field] = float(val)
+                        except ValueError:
+                            context[field] = val
+                    elif ftype == "bool":
+                        context[field] = val.lower() in ("true", "1", "yes")
+                    else:
+                        context[field] = val
+            else:
+                state.console.print("[dim]No context schema in definition.json. Creating with defaults.[/dim]")
+
+            try:
+                assistant = asyncio.run(
+                    server_client.create_assistant(
+                        state.active_graph_id, name, context=context or None
+                    )
+                )
+                aid = assistant["assistant_id"][:8]
+                state.console.print(f"[green]Created assistant '{name}' ({aid})[/green]")
+
+                # Offer to switch to new assistant
+                switch = questionary.confirm("Use this assistant now?", default=True).ask()
+                if switch:
+                    thread = asyncio.run(server_client.create_thread())
+                    state.active_assistant_id = assistant["assistant_id"]
+                    state.active_thread_id = thread["thread_id"]
+                    state.agent_messages.clear()
+                    state.console.print(
+                        f"[bold cyan]Switched to {name}[/bold cyan] "
+                        f"[dim](thread {state.active_thread_id[:8]})[/dim]"
+                    )
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
+
+        elif sub_cmd == "update":
+            if not state.active_assistant_id:
+                state.console.print("[red]No assistant active. Use /select first.[/red]")
+                return "continue"
+
+            graph_dir = registry.graph_dir(state.active_graph_id)
+            defn_path = graph_dir / "definition.json"
+            ctx_schema = {}
+            if defn_path.is_file():
+                defn = _json.loads(defn_path.read_text())
+                ctx_schema = defn.get("context", {})
+
+            if not ctx_schema:
+                state.console.print("[dim]No context schema — nothing to update.[/dim]")
+                return "continue"
+
+            # Fetch current assistant context
+            try:
+                assistants = asyncio.run(server_client.list_graph_assistants(state.active_graph_id))
+                current = next((a for a in assistants if a["assistant_id"] == state.active_assistant_id), None)
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
+                return "continue"
+
+            current_ctx = (current.get("context") or {}) if current else {}
+            context = {}
+            state.console.print("[dim]Update context values (Enter to keep current):[/dim]")
+            for field, spec in ctx_schema.items():
+                current_val = current_ctx.get(field, spec.get("default", ""))
+                val = questionary.text(f"  {field}:", default=str(current_val)).ask()
+                if val is None:
+                    state.console.print("[dim]Cancelled.[/dim]")
+                    return "continue"
+                ftype = spec.get("type", "str")
+                if ftype == "int":
+                    try:
+                        context[field] = int(val)
+                    except ValueError:
+                        context[field] = val
+                elif ftype == "float":
+                    try:
+                        context[field] = float(val)
+                    except ValueError:
+                        context[field] = val
+                elif ftype == "bool":
+                    context[field] = val.lower() in ("true", "1", "yes")
+                else:
+                    context[field] = val
+
+            try:
+                asyncio.run(server_client.update_assistant(state.active_assistant_id, context=context))
+                state.console.print("[green]Assistant updated (new version created).[/green]")
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
+
+        elif sub_cmd == "delete":
+            if not state.active_assistant_id:
+                state.console.print("[red]No assistant active.[/red]")
+                return "continue"
+            confirm = questionary.confirm(
+                f"Delete assistant {state.active_assistant_id[:8]}?", default=False
+            ).ask()
+            if confirm:
+                try:
+                    asyncio.run(server_client.delete_assistant(state.active_assistant_id))
+                    state.console.print("[green]Assistant deleted.[/green]")
+                    state.active_assistant_id = ""
+                    state.active_thread_id = ""
+                except Exception as e:
+                    state.console.print(f"[bold red]Error:[/bold red] {e}")
+
+        else:
+            state.console.print(
+                "[dim]Usage: /assistant create <name> | /assistant update | /assistant delete[/dim]"
+            )
         return "continue"
 
     if cmd_name == "graph":
