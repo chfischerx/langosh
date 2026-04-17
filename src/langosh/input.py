@@ -1,7 +1,10 @@
 """Prompt toolkit input widget with slash command completion."""
 
+from __future__ import annotations
+
 import os
 import sys
+from typing import TYPE_CHECKING
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
@@ -15,8 +18,10 @@ from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.layout.processors import BeforeInput
 from prompt_toolkit.styles import Style as PtStyle
 
-from .commands.menus import ADMIN_COMMANDS_MENU, AGENT_EDIT_COMMANDS_MENU, AGENTS_COMMANDS_MENU, AGENTS_GRAPH_COMMANDS_MENU, CHAT_COMMANDS_MENU, CODE_COMMANDS_MENU
 import langosh.state as state
+
+if TYPE_CHECKING:
+    from .modes import ModeStack
 
 
 class SlashCompleter(Completer):
@@ -39,13 +44,6 @@ class SlashCompleter(Completer):
                     display_meta=desc,
                 )
 
-
-_chat_completer = SlashCompleter(CHAT_COMMANDS_MENU)
-_code_completer = SlashCompleter(CODE_COMMANDS_MENU)
-_agents_completer = SlashCompleter(AGENTS_COMMANDS_MENU)
-_agents_graph_completer = SlashCompleter(AGENTS_GRAPH_COMMANDS_MENU)
-_agent_edit_completer = SlashCompleter(AGENT_EDIT_COMMANDS_MENU)
-_admin_completer = SlashCompleter(ADMIN_COMMANDS_MENU)
 
 _history_path = os.path.join(os.path.expanduser("~"), ".langosh", "input_history")
 _history = FileHistory(_history_path)
@@ -73,28 +71,29 @@ def model_display_name() -> str:
     return model_id
 
 
+# Global reference set by repl.py at startup.
+_mode_stack: ModeStack | None = None
+
+
+def set_mode_stack(stack: ModeStack) -> None:
+    """Wire up the global mode stack reference for the input system."""
+    global _mode_stack
+    _mode_stack = stack
+
+
 def _mode_bar() -> str:
-    """Build the top separator with mode label and active model name."""
+    """Build the top separator with mode path and optional model name."""
     cols = os.get_terminal_size().columns
-    if state.current_mode == "code":
-        mode_label = f"code:{state.code_sub_mode}"
-    elif state.current_mode == "main" and state.agent_editing:
-        mode_label = f"{state.active_graph_id}:edit:{state.agent_sub_mode}"
-    elif state.current_mode == "main" and state.active_graph_id:
-        mode_label = state.active_graph_id
-    elif state.current_mode == "main":
-        mode_label = "langosh"
-    else:
-        mode_label = state.current_mode
-    label = f" {mode_label} "
-    if state.current_mode in ("chat", "code") and state.active_model["provider"]:
+    path = _mode_stack.path if _mode_stack else "langosh"
+    label = f" {path} "
+    if _mode_stack and "llm" in path:
         name = model_display_name()
         if name:
-            label = f" {mode_label} ({name}) "
+            label = f" {path} ({name}) "
     pad = cols - len(label)
     left = pad // 2
     right = pad - left
-    return "─" * left + label + "─" * right
+    return "\u2500" * left + label + "\u2500" * right
 
 
 _MENU_RESERVE = 14  # lines to reserve below input for completion dropdown
@@ -107,13 +106,9 @@ def get_input() -> str | None:
     sys.stdout.write(f"\033[{_MENU_RESERVE}A")
     sys.stdout.flush()
 
-    sep = "─" * os.get_terminal_size().columns
-    effective_mode = "agent_edit" if state.current_mode == "main" and state.agent_editing else state.current_mode
-    _completers = {"chat": _chat_completer, "code": _code_completer, "agent_edit": _agent_edit_completer, "admin": _admin_completer}
-    if effective_mode == "main":
-        completer = _agents_graph_completer if state.active_graph_id else _agents_completer
-    else:
-        completer = _completers.get(effective_mode, _agents_completer)
+    sep = "\u2500" * os.get_terminal_size().columns
+    menu = _mode_stack.get_menu() if _mode_stack else []
+    completer = SlashCompleter(menu)
 
     buf = Buffer(
         history=_history,
@@ -222,7 +217,6 @@ def _trim_history() -> None:
             return
         with open(path) as f:
             lines = f.readlines()
-        # FileHistory format: each entry is a line starting with '+' (content) or '#' (timestamp)
         entries: list[list[str]] = []
         current: list[str] = []
         for line in lines:

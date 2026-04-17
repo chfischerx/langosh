@@ -8,9 +8,9 @@ import click.exceptions
 
 import langosh.state as state
 
-from .commands.slash_handlers import handle_slash_command
-from .input import erase_lines, get_input, model_display_name
-from .queries import send_code_query, send_query
+from .input import erase_lines, get_input, model_display_name, set_mode_stack
+from .modes import ModeStack
+from .modes.main import MainMode
 
 
 import json
@@ -81,7 +81,7 @@ def fetch_models_from_apis() -> None:
 
 
 def repl(app) -> None:
-    """Interactive REPL with mode support and slash commands."""
+    """Interactive REPL with hierarchical mode system."""
     from .history import load_history
     from .settings import get as get_setting
 
@@ -94,8 +94,6 @@ def repl(app) -> None:
     saved_model = get_setting("active_model")
     if saved_model and isinstance(saved_model, dict):
         provider = saved_model.get("provider")
-        # Migrate old internal tag: aws_bedrock → bedrock_converse (valid
-        # init_chat_model prefix).
         if provider == "aws_bedrock":
             provider = "bedrock_converse"
             from .settings import set as _set_setting
@@ -111,13 +109,25 @@ def repl(app) -> None:
     if saved_agent_sub_mode in ("plan", "auto", "edit"):
         state.agent_sub_mode = saved_agent_sub_mode
 
-    from .settings import get_agents_path
+    from .settings import get_active_server_name, get_agents_path, get_server_url
+
+    state.active_server_name = get_active_server_name()
+
+    # Initialize mode stack
+    mode_stack = ModeStack(MainMode())
+    set_mode_stack(mode_stack)
 
     name = model_display_name() or "none"
     agents_path = str(get_agents_path())
+    server_name = state.active_server_name
+    server_url = get_server_url()
     state.console.print("[bold white]langosh[/bold white] [dim]v0.1.0[/dim]")
-    state.console.print(f"[dim]  model: {name}[/dim]")
-    state.console.print(f"[dim]  path:  {agents_path}[/dim]")
+    state.console.print(f"[dim]  model:  {name}[/dim]")
+    if server_name:
+        state.console.print(f"[dim]  server: {server_name} ({server_url})[/dim]")
+    else:
+        state.console.print(f"[dim]  server: {server_url}[/dim]")
+    state.console.print(f"[dim]  path:   {agents_path}[/dim]")
 
     while True:
         line = get_input()
@@ -150,7 +160,7 @@ def repl(app) -> None:
                     state.console.print(f"[bold red]Error:[/bold red] {e}")
             continue
 
-        # --- Slash commands (both modes) ---
+        # --- Slash commands ---
         if line.startswith("/"):
             cmd_body = line[1:]
             parts = cmd_body.split(None, 1)
@@ -159,7 +169,7 @@ def repl(app) -> None:
             state.console.print(f"[dim]> {line}[/dim]")
 
             try:
-                action = handle_slash_command(cmd_name, parts)
+                action = mode_stack.handle_command(cmd_name, parts)
             except KeyboardInterrupt:
                 state.console.print("\n[yellow]Interrupted.[/yellow]")
                 continue
@@ -191,28 +201,9 @@ def repl(app) -> None:
         # --- Non-slash input ---
         state.console.print(f"[dim]> {line}[/dim]")
 
-        if state.current_mode == "chat":
-            try:
-                send_query(line)
-            except KeyboardInterrupt:
-                state.console.print("\n[yellow]Interrupted.[/yellow]")
-            except Exception as e:
-                state.console.print(f"[bold red]Error:[/bold red] {e}")
-        elif state.current_mode == "code":
-            try:
-                send_code_query(line)
-            except KeyboardInterrupt:
-                state.console.print("\n[yellow]Interrupted.[/yellow]")
-            except Exception as e:
-                state.console.print(f"[bold red]Error:[/bold red] {e}")
-        elif state.current_mode == "main" and state.agent_editing:
-            from .agents.editor import send_edit_query
-
-            try:
-                send_edit_query(line)
-            except KeyboardInterrupt:
-                state.console.print("\n[yellow]Interrupted.[/yellow]")
-            except Exception as e:
-                state.console.print(f"[bold red]Error:[/bold red] {e}")
-        else:
-            state.console.print("[dim]Type /help for commands.[/dim]")
+        try:
+            mode_stack.handle_free_text(line)
+        except KeyboardInterrupt:
+            state.console.print("\n[yellow]Interrupted.[/yellow]")
+        except Exception as e:
+            state.console.print(f"[bold red]Error:[/bold red] {e}")

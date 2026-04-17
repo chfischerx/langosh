@@ -61,22 +61,111 @@ def get_agents_path() -> Path:
     return (Path.cwd().parent / _DEFAULT_AGENTS_DIR_NAME).resolve()
 
 
-def get_server_url() -> str:
-    """Resolve the langosh-server URL.
+# ── Multi-server helpers ───────────────────────────────────────────────────
 
-    Resolution order: env LANGOSH_SERVER_URL > settings.json `server_url` >
+
+def get_servers() -> dict[str, dict]:
+    """Return the full servers dict: {name: {url, api_key, langosh_server}}."""
+    return _load().get("servers", {})
+
+
+def get_active_server_name() -> str:
+    """Return the name of the active server, or empty string if none."""
+    return _load().get("active_server", "")
+
+
+def set_active_server(name: str) -> None:
+    """Switch the active server by name."""
+    data = _load()
+    if name not in data.get("servers", {}):
+        raise ValueError(f"Unknown server: {name}")
+    data["active_server"] = name
+    _save(data)
+
+
+def add_server(
+    name: str, url: str, api_key: str | None = None, langosh_server: bool = True
+) -> None:
+    """Add a new named server."""
+    data = _load()
+    data.setdefault("servers", {})[name] = {
+        "url": url,
+        "api_key": api_key,
+        "langosh_server": langosh_server,
+    }
+    # If this is the first server, make it active automatically.
+    if not data.get("active_server"):
+        data["active_server"] = name
+    _save(data)
+
+
+_SENTINEL = object()
+
+
+def update_server(
+    name: str,
+    *,
+    url: str | None = None,
+    api_key: object = _SENTINEL,
+    langosh_server: bool | None = None,
+) -> None:
+    """Update fields on an existing server. Pass api_key=None to clear it."""
+    data = _load()
+    server = data.get("servers", {}).get(name)
+    if not server:
+        raise ValueError(f"Unknown server: {name}")
+    if url is not None:
+        server["url"] = url
+    if api_key is not _SENTINEL:
+        server["api_key"] = api_key
+    if langosh_server is not None:
+        server["langosh_server"] = langosh_server
+    _save(data)
+
+
+def remove_server(name: str) -> None:
+    """Remove a named server. Cannot remove the active server."""
+    data = _load()
+    if name not in data.get("servers", {}):
+        raise ValueError(f"Unknown server: {name}")
+    if data.get("active_server") == name:
+        raise ValueError("Cannot remove the active server. Switch first.")
+    del data["servers"][name]
+    _save(data)
+
+
+def is_langosh_server() -> bool:
+    """Return True if the active server has langosh-server admin endpoints."""
+    data = _load()
+    active = data.get("active_server", "")
+    server = data.get("servers", {}).get(active, {})
+    return server.get("langosh_server", True)
+
+
+def get_server_url() -> str:
+    """Resolve the server URL for the active server.
+
+    Resolution order: env LANGOSH_SERVER_URL > active server in settings >
     DEFAULT_SERVER_URL.
     """
-    return (
-        os.environ.get("LANGOSH_SERVER_URL")
-        or get("server_url")
-        or DEFAULT_SERVER_URL
-    )
+    env = os.environ.get("LANGOSH_SERVER_URL")
+    if env:
+        return env
+    data = _load()
+    active = data.get("active_server", "")
+    server = data.get("servers", {}).get(active, {})
+    return server.get("url") or DEFAULT_SERVER_URL
 
 
 def get_api_key() -> str | None:
-    """Resolve the API key for langosh-server authentication.
+    """Resolve the API key for the active server.
 
-    Resolution order: env LANGOSH_API_KEY > settings.json `api_key`.
+    Resolution order: env LANGOSH_API_KEY > active server in settings.
     """
-    return os.environ.get("LANGOSH_API_KEY") or get("api_key")
+    env = os.environ.get("LANGOSH_API_KEY")
+    if env:
+        return env
+    data = _load()
+    active = data.get("active_server", "")
+    server = data.get("servers", {}).get(active, {})
+    return server.get("api_key")

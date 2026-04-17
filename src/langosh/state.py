@@ -13,8 +13,7 @@ last_results: list = []
 # Active model selection
 active_model: dict = {"provider": None, "model_id": None}
 
-# Mode state
-current_mode: str = "main"
+# Sub-mode for code/agent editing (used by queries.py / agents/editor.py)
 code_sub_mode: str = "auto"  # plan, auto, edit
 
 # Per-mode conversation histories
@@ -25,12 +24,16 @@ code_messages: list[dict] = []
 chat_summary: str = ""
 code_summary: str = ""
 
-# Agent editing state — backed by langosh-agents repo + langosh-server
-active_graph_id: str = ""        # which graph_id from langgraph.json is selected
-active_assistant_id: str = ""    # server-side assistant attached to the selected graph
-active_thread_id: str = ""       # server-side thread for multi-turn /test runs
-agent_sub_mode: str = "auto"     # plan, auto, edit
-agent_messages: list[dict] = []  # local rendering of the active thread's conversation
+# Active server (display mirror of settings.active_server)
+active_server_name: str = ""
+
+# Agent editing state (used by agents/editor.py and agents/builder.py;
+# mode instances set these when entering/exiting dev graph mode)
+active_graph_id: str = ""
+active_assistant_id: str = ""
+active_thread_id: str = ""
+agent_sub_mode: str = "auto"     # normal, plan, auto
+agent_messages: list[dict] = []
 agent_summary: str = ""
 agent_editing: bool = False
 

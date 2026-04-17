@@ -110,6 +110,16 @@ are stateless — each invocation is independent with no memory.
 | `/status` | Show git status (in agents repo) |
 | `/commit` | Commit all changes (in agents repo) |
 
+#### General
+
+| Command | Description |
+|---------|-------------|
+| `/chat` | Switch to LLM chat mode |
+| `/code` | Switch to LLM code mode (with tools) |
+| `/admin` | Switch to admin mode |
+| `/help` | Show available commands |
+| `/exit` | Quit |
+
 ### Chat mode
 
 | Command | Description |
@@ -123,6 +133,8 @@ are stateless — each invocation is independent with no memory.
 | `/clc` | Clear conversation history |
 | `/code` | Switch to code mode |
 | `/home` | Return to home |
+| `/help` | Show available commands |
+| `/exit` | Quit |
 
 Any text that doesn't start with `/` is sent as an LLM prompt.
 
@@ -142,6 +154,8 @@ Any text that doesn't start with `/` is sent as an LLM prompt.
 | `/clc` | Clear conversation history |
 | `/chat` | Switch to chat mode |
 | `/home` | Return to home |
+| `/help` | Show available commands |
+| `/exit` | Quit |
 
 Any text that doesn't start with `/` is sent as a coding task with tool access.
 
@@ -158,6 +172,8 @@ Available after `/edit` on a selected graph.
 | `/cls` | Clear screen |
 | `/clc` | Reset the active thread |
 | `/done` | Exit edit mode |
+| `/help` | Show available commands |
+| `/exit` | Quit |
 
 Any text that doesn't start with `/` is sent as an edit instruction.
 
@@ -165,27 +181,48 @@ Any text that doesn't start with `/` is sent as an edit instruction.
 
 | Command | Description |
 |---------|-------------|
-| `/server` | Show or set the langosh-server URL |
-| `/info` | Show server info (version, graphs, status) |
-| `/reload` | Hot-reload agents on the server |
-| `/config` | View and edit server configuration |
-| `/keys` | List API keys |
-| `/key create` | Create an API key |
-| `/key delete` | Delete an API key |
-| `/key rotate` | Rotate an API key |
+| `/settings` | CLI settings (servers, API keys, defaults) |
+| `/server` | Manage langosh-server (info, config, keys, reload) |
 | `/home` | Return to home |
+| `/help` | Show available commands |
+| `/exit` | Quit |
 
-#### /config
+#### /settings
 
-The `/config` command provides an interactive menu:
+Interactive menu to view and edit CLI-side settings:
 
-- **Show all config** — display all parameters grouped by category
-- **Setup wizard** — step through every parameter sequentially
-- **Reset all config** — clear all values (revert to env-var fallbacks)
-- **Category selection** — pick a category, then a parameter to set or clear
+- **Servers** — add, edit, remove, and switch between named servers. Each
+  server has a name, URL, API key, and a `langosh_server` flag (indicates
+  whether the server supports langosh-server admin endpoints)
+- Anthropic / OpenAI API keys
+- Default provider and model
+- AWS Bedrock region
+- Max tokens and max tool turns
 
-Categories: `model`, `provider`, `tools`, `tracing`, `git`, `auth`.
-Encrypted values (API keys, tokens) use masked input.
+Servers are stored in `~/.langosh/settings.json` under the `servers` key:
+
+```json
+{
+  "servers": {
+    "local": {"url": "http://localhost:8001", "api_key": null, "langosh_server": true},
+    "cloud": {"url": "https://cloud.langgraph.com", "api_key": "lgp-key", "langosh_server": false}
+  },
+  "active_server": "local"
+}
+```
+
+#### /server
+
+Interactive menu for server management (only available when the active server
+has `langosh_server: true`):
+
+- **Info** — server version, graphs, status
+- **Reload** — hot-reload agents on the server
+- **Config** — view and edit server configuration
+- **Keys** — list API keys
+- **Key create** — create an API key
+- **Key delete** — delete an API key
+- **Key rotate** — rotate an API key
 
 ## Project structure
 
