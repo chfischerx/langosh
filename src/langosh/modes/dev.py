@@ -5,6 +5,126 @@ import langosh.state as state
 from . import Mode, command
 
 
+def _render_graph_ascii(nodes: list[dict], edges: list[dict]) -> str:
+    """Render a definition.json graph as ASCII art using grandalf for layout."""
+    from grandalf.graphs import Edge as GEdge
+    from grandalf.graphs import Graph as GGraph
+    from grandalf.graphs import Vertex
+    from grandalf.layouts import SugiyamaLayout
+
+    class _View:
+        def __init__(self, w: int, h: int):
+            self.w = w
+            self.h = h
+            self.xy = (0.0, 0.0)
+
+    node_names = ["__start__"] + [n["name"] for n in nodes] + ["__end__"]
+    pad = 4
+    box_h = 3
+    verts = {}
+    for name in node_names:
+        v = Vertex(name)
+        v.view = _View(len(name) + pad, box_h)
+        verts[name] = v
+
+    gedges = []
+    for e in edges:
+        src = verts.get(e.get("from"))
+        tgt = verts.get(e.get("to"))
+        if src and tgt:
+            gedges.append(GEdge(src, tgt, data=e))
+
+    g = GGraph(list(verts.values()), gedges, directed=True)
+    comp = g.C[0] if g.C else g
+    layout = SugiyamaLayout(comp)
+    layout.init_all(roots=[verts["__start__"]])
+    layout.draw(N=1.5)
+
+    # Extract positions — grandalf gives center coordinates
+    raw = []
+    for v in verts.values():
+        cx, cy = v.view.xy
+        w = v.view.w
+        raw.append((v.data, cx, cy, w, box_h))
+
+    # Normalize so min x/y start at 1
+    min_x = min(cx - w / 2 for _, cx, _, w, _ in raw)
+    min_y = min(cy - box_h / 2 for _, _, cy, _, _ in raw)
+    gap_y = 2  # rows between boxes
+
+    positioned = []
+    for name, cx, cy, w, h in raw:
+        x = int(cx - w / 2 - min_x) + 1
+        y = int(cy - h / 2 - min_y) + 1
+        positioned.append((name, x, y, w, h))
+
+    # Scale Y: grandalf may pack layers too tight; ensure gap between layers
+    layers: dict[int, list] = {}
+    for item in positioned:
+        layers.setdefault(item[2], []).append(item)
+    sorted_ys = sorted(layers.keys())
+    y_map = {}
+    cur_y = 1
+    for ly in sorted_ys:
+        y_map[ly] = cur_y
+        cur_y += box_h + gap_y
+    positioned = [(n, x, y_map[y], w, h) for n, x, y, w, h in positioned]
+
+    canvas_w = max(x + w for _, x, _, w, _ in positioned) + 2
+    canvas_h = max(y + box_h for _, _, y, _, _ in positioned) + 2
+    canvas = [[" "] * canvas_w for _ in range(canvas_h)]
+
+    def put(x: int, y: int, ch: str) -> None:
+        if 0 <= y < canvas_h and 0 <= x < canvas_w:
+            canvas[y][x] = ch
+
+    def put_str(x: int, y: int, s: str) -> None:
+        for i, ch in enumerate(s):
+            put(x + i, y, ch)
+
+    # Draw boxes
+    for name, x, y, w, h in positioned:
+        put_str(x, y, "+" + "-" * (w - 2) + "+")
+        lpad = (w - 2 - len(name)) // 2
+        rpad = w - 2 - lpad - len(name)
+        put_str(x, y + 1, "|" + " " * lpad + name + " " * rpad + "|")
+        put_str(x, y + 2, "+" + "-" * (w - 2) + "+")
+
+    # Draw edges
+    rects = {name: (x, y, w, h) for name, x, y, w, h in positioned}
+    for e in edges:
+        src_name = e.get("from")
+        tgt_name = e.get("to")
+        if src_name not in rects or tgt_name not in rects:
+            continue
+        sx, sy, sw, _ = rects[src_name]
+        tx, ty, tw, _ = rects[tgt_name]
+        src_cx = sx + sw // 2
+        src_bot = sy + box_h
+        tgt_cx = tx + tw // 2
+        tgt_top = ty
+
+        cond = e.get("conditional", False)
+        arrow = "v" if not cond else "?"
+
+        if src_cx == tgt_cx:
+            for row in range(src_bot, tgt_top):
+                put(src_cx, row, "|")
+            put(tgt_cx, tgt_top - 1, arrow)
+        else:
+            mid_y = (src_bot + tgt_top) // 2
+            for row in range(src_bot, mid_y):
+                put(src_cx, row, "|")
+            lo, hi = min(src_cx, tgt_cx), max(src_cx, tgt_cx)
+            for col in range(lo, hi + 1):
+                put(col, mid_y, "-")
+            for row in range(mid_y + 1, tgt_top):
+                put(tgt_cx, row, "|")
+            put(tgt_cx, tgt_top - 1, arrow)
+
+    return "\n".join("".join(row).rstrip() for row in canvas).rstrip()
+
+
 class _GitMixin:
     """Shared git commands for dev modes."""
 
@@ -337,7 +457,6 @@ class DevGraphMode(_GitMixin, Mode):
     @command("preview", "Visualize the selected graph")
     def cmd_preview(self, parts):
         import json as _json
-        from rich.syntax import Syntax
         from ..agents import registry
 
         folder = registry.graph_dir(self.graph_id)
@@ -352,6 +471,37 @@ class DevGraphMode(_GitMixin, Mode):
             state.console.print(f"[bold red]Error reading definition.json:[/bold red] {e}")
             return "continue"
 
-        state.console.print(f"\n[bold]Graph: {self.graph_id}[/bold]\n")
-        state.console.print(Syntax(_json.dumps(definition, indent=2), "json", theme="monokai"))
+        state.console.print(f"\n[bold]Graph: {self.graph_id}[/bold]")
+
+        if definition.get("type") == "simple":
+            tools = definition.get("tools", [])
+            tool_node = f"tools ({len(tools)})"
+            simple_nodes = [
+                {"name": "call_model", "type": "llm"},
+            ]
+            if tools:
+                simple_nodes.append({"name": tool_node, "type": "tool"})
+            simple_edges = [
+                {"from": "__start__", "to": "call_model", "conditional": False},
+            ]
+            if tools:
+                simple_edges.append({"from": "call_model", "to": tool_node, "conditional": True})
+                simple_edges.append({"from": "call_model", "to": "__end__", "conditional": True})
+                simple_edges.append({"from": tool_node, "to": "call_model", "conditional": False})
+            else:
+                simple_edges.append({"from": "call_model", "to": "__end__", "conditional": False})
+            state.console.print()
+            state.console.print(_render_graph_ascii(simple_nodes, simple_edges))
+            if tools:
+                state.console.print(f"\n  [dim]Tools: {', '.join(tools)}[/dim]")
+            return "continue"
+
+        nodes = definition.get("nodes", [])
+        edges = definition.get("edges", [])
+        if not nodes:
+            state.console.print("[dim]No nodes in definition.[/dim]")
+            return "continue"
+
+        state.console.print()
+        state.console.print(_render_graph_ascii(nodes, edges))
         return "continue"
