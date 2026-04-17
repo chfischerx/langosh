@@ -46,12 +46,18 @@ class _GitMixin:
             state.console.print(f"[green]{result.stdout.strip()}[/green]")
         return "continue"
 
+    @command("deploy", "Commit, push, and reload agents on the server")
+    def cmd_deploy(self, parts):
+        from .exec_ import _deploy
+        return _deploy()
+
 
 class DevMode(_GitMixin, Mode):
     """Dev mode — list, create, and select graphs from the local repo."""
 
     def path_label(self) -> str:
-        return "dev"
+        server = state.active_server_name
+        return f"dev[{server}]" if server else "dev"
 
     def on_enter(self) -> None:
         state.console.print("[bold cyan]Dev mode.[/bold cyan] Work with local graphs.")
@@ -191,6 +197,7 @@ class DevGraphMode(_GitMixin, Mode):
         return f"{self.graph_id}:{self.llm_mode}"
 
     def on_enter(self) -> None:
+        state.active_graph_id = self.graph_id
         state.agent_editing = True
         state.agent_messages.clear()
         state.agent_summary = ""
@@ -201,6 +208,7 @@ class DevGraphMode(_GitMixin, Mode):
         state.console.print("[dim]Type /help for commands, /back to exit.[/dim]")
 
     def on_exit(self) -> None:
+        state.active_graph_id = ""
         state.agent_editing = False
 
     def handle_free_text(self, text: str) -> None:
@@ -270,6 +278,11 @@ class DevGraphMode(_GitMixin, Mode):
         )
         return "continue"
 
+    @command("test", "Stateless test run against the server")
+    def cmd_test(self, parts):
+        from .exec_ import _stateless_test
+        return _stateless_test(self.graph_id, parts)
+
     @command("delete", "Delete the selected graph")
     def cmd_delete(self, parts):
         import shutil
@@ -323,17 +336,22 @@ class DevGraphMode(_GitMixin, Mode):
 
     @command("preview", "Visualize the selected graph")
     def cmd_preview(self, parts):
+        import json as _json
+        from rich.syntax import Syntax
+        from ..agents import registry
+
+        folder = registry.graph_dir(self.graph_id)
+        def_path = folder / "definition.json"
+        if not def_path.is_file():
+            state.console.print(f"[yellow]No definition.json in {folder}.[/yellow]")
+            return "continue"
+
         try:
-            import importlib
-            mod = importlib.import_module(f"graphs.{self.graph_id}")
-            local_graph = getattr(mod, "graph", None)
-            if local_graph is not None:
-                from langgraph.graph import StateGraph
-                compiled = local_graph.compile() if isinstance(local_graph, StateGraph) else local_graph
-                state.console.print(f"\n[bold]Graph: {self.graph_id}[/bold]\n")
-                state.console.print(compiled.get_graph().draw_ascii())
-                return "continue"
+            definition = _json.loads(def_path.read_text())
         except Exception as e:
-            state.console.print(f"[dim]Local import failed ({e}).[/dim]")
-        state.console.print("[dim]Could not visualize graph locally.[/dim]")
+            state.console.print(f"[bold red]Error reading definition.json:[/bold red] {e}")
+            return "continue"
+
+        state.console.print(f"\n[bold]Graph: {self.graph_id}[/bold]\n")
+        state.console.print(Syntax(_json.dumps(definition, indent=2), "json", theme="monokai"))
         return "continue"

@@ -120,6 +120,165 @@ class _ThreadCommandsMixin:
         return "continue"
 
 
+def _deploy() -> str:
+    """Shared deploy: commit, push, and reload agents on the server."""
+    import subprocess
+    from datetime import datetime
+    from ..agents import server_client
+    from ..settings import get_agents_path, is_langosh_server
+
+    agents_path = str(get_agents_path())
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=agents_path,
+        capture_output=True, text=True,
+    )
+    if status.stdout.strip():
+        subprocess.run(["git", "add", "-A"], cwd=agents_path, capture_output=True)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+        result = subprocess.run(
+            ["git", "commit", "-m", f"Deploy: {ts}"],
+            cwd=agents_path, capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            state.console.print(
+                f"[green]Committed.[/green] [dim]{result.stdout.strip().splitlines()[-1]}[/dim]"
+            )
+        else:
+            state.console.print(f"[red]Commit failed:[/red] [dim]{result.stderr.strip()}[/dim]")
+            return "continue"
+    else:
+        state.console.print("[dim]No uncommitted changes.[/dim]")
+
+    push = subprocess.run(
+        ["git", "push"], cwd=agents_path, capture_output=True, text=True,
+    )
+    if push.returncode == 0:
+        out = push.stderr.strip() or push.stdout.strip()
+        if "Everything up-to-date" in out:
+            state.console.print("[dim]Already up to date with remote.[/dim]")
+        else:
+            state.console.print("[green]Pushed.[/green]")
+    else:
+        state.console.print(f"[yellow]Push failed:[/yellow] [dim]{push.stderr.strip()}[/dim]")
+
+    if is_langosh_server():
+        try:
+            result = asyncio.run(server_client.reload_agents())
+            state.console.print("[green]Server reloaded.[/green]")
+            if isinstance(result, dict):
+                sha = result.get("sha", "")[:7]
+                prev = result.get("prev_sha", "")[:7]
+                if sha and prev:
+                    state.console.print(f"  [dim]{prev} \u2192 {sha}[/dim]")
+                commits = result.get("commits", [])
+                for c in commits:
+                    csha = c.get("sha", "")[:7]
+                    msg = c.get("message", "")
+                    author = c.get("author", "")
+                    state.console.print(f"  [cyan]{csha}[/cyan] {msg} [dim]({author})[/dim]")
+                graphs = result.get("graphs", [])
+                if graphs:
+                    state.console.print(f"  [dim]Graphs: {', '.join(graphs)}[/dim]")
+        except Exception as e:
+            state.console.print(f"[yellow]Reload failed:[/yellow] [dim]{e}[/dim]")
+    else:
+        state.console.print("[dim]Skipping reload (not a langosh server).[/dim]")
+    return "continue"
+
+
+def _stateless_test(graph_id: str, parts: list[str]) -> str:
+    """Shared stateless test: ensure assistant, pick exec mode, prompt for message, run."""
+    import questionary
+    from ..agents import server_client
+
+    try:
+        assistant = asyncio.run(server_client.ensure_assistant(graph_id))
+    except Exception as e:
+        state.console.print(f"[bold red]Server error:[/bold red] {e}")
+        return "continue"
+
+    aid = assistant["assistant_id"]
+
+    exec_mode = questionary.select(
+        "Execution mode:",
+        choices=["Stream output", "Wait for output", "Background"],
+    ).ask()
+    if exec_mode is None:
+        state.console.print("[dim]Cancelled.[/dim]")
+        return "continue"
+
+    rest = parts[1].strip() if len(parts) > 1 else ""
+    if not rest:
+        rest = questionary.text("Test message:").ask()
+        if not rest or not rest.strip():
+            state.console.print("[dim]Cancelled.[/dim]")
+            return "continue"
+    msg = rest.strip()
+
+    messages = [{"role": "user", "content": msg}]
+
+    if exec_mode == "Stream output":
+        async def _on_event(event_type, data):
+            if event_type == "token":
+                state.console.print(data.get("text", ""), end="", soft_wrap=True, highlight=False)
+            elif event_type == "tool_call":
+                state.console.print(f"\n[dim]  \u21b3 calling {data.get('name', '?')}...[/dim]")
+            elif event_type == "tool_result":
+                preview = data.get("preview", "")[:80]
+                state.console.print(f"[dim]  \u21b3 done ({preview})[/dim]")
+            elif event_type == "error":
+                state.console.print(f"\n[bold red]Error:[/bold red] {data.get('message', '')}")
+
+        state.console.print(f"\n[dim]Stateless streaming run...[/dim]\n")
+        try:
+            asyncio.run(
+                server_client.stream_run(
+                    assistant_id=aid, thread_id=None,
+                    messages=messages, on_event=_on_event,
+                )
+            )
+        except KeyboardInterrupt:
+            state.console.print("\n[yellow]Interrupted.[/yellow]")
+        except Exception as e:
+            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
+
+    elif exec_mode == "Wait for output":
+        state.console.print(f"\n[dim]Stateless run (wait)...[/dim]")
+        try:
+            with state.console.status("[dim]Waiting for response...[/dim]"):
+                result = asyncio.run(
+                    server_client.wait_run(
+                        assistant_id=aid, thread_id=None,
+                        messages=messages,
+                    )
+                )
+            text = result.get("text", "")
+            state.console.print(f"\n{text}")
+        except KeyboardInterrupt:
+            state.console.print("\n[yellow]Interrupted.[/yellow]")
+        except Exception as e:
+            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
+
+    elif exec_mode == "Background":
+        state.console.print(f"\n[dim]Submitting background run (stateless)...[/dim]")
+        try:
+            result = asyncio.run(
+                server_client.background_run(
+                    assistant_id=aid, thread_id=None,
+                    messages=messages,
+                )
+            )
+            run_id = result.get("run_id", "?")[:8]
+            run_status = result.get("status", "?")
+            state.console.print(f"[green]Run submitted.[/green] [dim]run {run_id} ({run_status})[/dim]")
+        except Exception as e:
+            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
+
+    state.console.print()
+    return "continue"
+
+
 def _run_interactive(mode, parts, assistant_id: str, graph_id: str, *, metadata_filter: dict) -> str:
     """Shared /run flow: execution mode, thread selection, message, then execute."""
     import questionary
@@ -340,69 +499,7 @@ class ExecMode(Mode):
 
     @command("deploy", "Commit, push, and reload agents on the server")
     def cmd_deploy(self, parts):
-        import subprocess
-        from datetime import datetime
-        from ..agents import server_client
-        from ..settings import get_agents_path, is_langosh_server
-
-        agents_path = str(get_agents_path())
-
-        status = subprocess.run(
-            ["git", "status", "--porcelain"], cwd=agents_path,
-            capture_output=True, text=True,
-        )
-        if status.stdout.strip():
-            subprocess.run(["git", "add", "-A"], cwd=agents_path, capture_output=True)
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-            result = subprocess.run(
-                ["git", "commit", "-m", f"Deploy: {ts}"],
-                cwd=agents_path, capture_output=True, text=True,
-            )
-            if result.returncode == 0:
-                state.console.print(
-                    f"[green]Committed.[/green] [dim]{result.stdout.strip().splitlines()[-1]}[/dim]"
-                )
-            else:
-                state.console.print(f"[red]Commit failed:[/red] [dim]{result.stderr.strip()}[/dim]")
-                return "continue"
-        else:
-            state.console.print("[dim]No uncommitted changes.[/dim]")
-
-        push = subprocess.run(
-            ["git", "push"], cwd=agents_path, capture_output=True, text=True,
-        )
-        if push.returncode == 0:
-            out = push.stderr.strip() or push.stdout.strip()
-            if "Everything up-to-date" in out:
-                state.console.print("[dim]Already up to date with remote.[/dim]")
-            else:
-                state.console.print("[green]Pushed.[/green]")
-        else:
-            state.console.print(f"[yellow]Push failed:[/yellow] [dim]{push.stderr.strip()}[/dim]")
-
-        if is_langosh_server():
-            try:
-                result = asyncio.run(server_client.reload_agents())
-                state.console.print("[green]Server reloaded.[/green]")
-                if isinstance(result, dict):
-                    sha = result.get("sha", "")[:7]
-                    prev = result.get("prev_sha", "")[:7]
-                    if sha and prev:
-                        state.console.print(f"  [dim]{prev} \u2192 {sha}[/dim]")
-                    commits = result.get("commits", [])
-                    for c in commits:
-                        csha = c.get("sha", "")[:7]
-                        msg = c.get("message", "")
-                        author = c.get("author", "")
-                        state.console.print(f"  [cyan]{csha}[/cyan] {msg} [dim]({author})[/dim]")
-                    graphs = result.get("graphs", [])
-                    if graphs:
-                        state.console.print(f"  [dim]Graphs: {', '.join(graphs)}[/dim]")
-            except Exception as e:
-                state.console.print(f"[yellow]Reload failed:[/yellow] [dim]{e}[/dim]")
-        else:
-            state.console.print("[dim]Skipping reload (not a langosh server).[/dim]")
-        return "continue"
+        return _deploy()
 
 
 class ExecGraphMode(_ThreadCommandsMixin, Mode):
@@ -617,51 +714,7 @@ class ExecGraphMode(_ThreadCommandsMixin, Mode):
 
     @command("test", "Stateless run (no thread history)")
     def cmd_test(self, parts):
-        import questionary
-        from ..agents import server_client
-
-        # Need an assistant — ensure default exists
-        try:
-            assistant = asyncio.run(server_client.ensure_assistant(self.graph_id))
-        except Exception as e:
-            state.console.print(f"[bold red]Server error:[/bold red] {e}")
-            return "continue"
-
-        rest = parts[1].strip() if len(parts) > 1 else ""
-        if not rest:
-            rest = questionary.text("Test message:").ask()
-            if not rest or not rest.strip():
-                state.console.print("[dim]Cancelled.[/dim]")
-                return "continue"
-        msg = rest.strip()
-
-        async def _on_event(event_type, data):
-            if event_type == "token":
-                state.console.print(data.get("text", ""), end="", soft_wrap=True, highlight=False)
-            elif event_type == "tool_call":
-                state.console.print(f"\n[dim]  \u21b3 calling {data.get('name', '?')}...[/dim]")
-            elif event_type == "tool_result":
-                preview = data.get("preview", "")[:80]
-                state.console.print(f"[dim]  \u21b3 done ({preview})[/dim]")
-            elif event_type == "error":
-                state.console.print(f"\n[bold red]Error:[/bold red] {data.get('message', '')}")
-
-        state.console.print(f"\n[dim]Stateless run (no thread)...[/dim]\n")
-        try:
-            asyncio.run(
-                server_client.stream_run(
-                    assistant_id=assistant["assistant_id"],
-                    thread_id=None,
-                    messages=[{"role": "user", "content": msg}],
-                    on_event=_on_event,
-                )
-            )
-        except KeyboardInterrupt:
-            state.console.print("\n[yellow]Interrupted.[/yellow]")
-        except Exception as e:
-            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
-        state.console.print()
-        return "continue"
+        return _stateless_test(self.graph_id, parts)
 
     @command("run", "Create a stateful run (default assistant)")
     def cmd_run(self, parts):

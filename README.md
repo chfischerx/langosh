@@ -22,184 +22,233 @@ pip install -e .
 langosh
 ```
 
-The CLI starts in **main mode** (agent management). Type `/` to see available
-commands with tab completion, or use arrow keys to recall input history.
+The CLI starts in **main mode**. Type `/` to see available commands with tab
+completion, or use arrow keys to recall input history.
 
-## Modes
+## Navigation
 
-| Mode | Purpose | Enter with |
-|------|---------|------------|
-| **main** | Manage graphs, assistants, threads, runs | default on startup |
-| **chat** | Direct LLM conversation | `/chat` |
-| **code** | LLM with tool use (file read/write/exec) | `/code` |
-| **admin** | Server configuration and management | `/admin` |
-| **edit** | Edit a graph via LLM conversation | `/edit` (with graph selected) |
+The CLI uses a hierarchical mode system. Each mode has its own commands.
 
-Use `/home` to return to main mode from any other mode.
+- `/back` — go back to the parent mode
+- `/home` — return to main mode
+- `/help` — show available commands for the current mode
+- `/cls` — clear screen
+- `/exit` — quit
+
+The mode bar at the top shows the current path (e.g. `exec[local]:my-graph:assistant-1`).
+
+## Mode tree
+
+```
+main
+├── dev                      Local graph development
+│   └── [graph_id]:[mode]    LLM-driven editing (normal/plan/auto)
+├── exec[server]             Execute graphs on a server
+│   └── [graph_id]           Graph commands
+│       └── [assistant]      Assistant commands
+│           └── [thread]     Thread inspection
+│               └── [run]    Run inspection
+├── llm                      LLM interaction
+│   ├── chat                 Direct conversation
+│   └── code                 LLM with tool use
+├── server                   Server management
+│   └── [server_name]        Selected server
+│       ├── config           Server configuration
+│       └── apikeys          API key management
+└── settings                 CLI settings
+```
 
 ## Commands
 
-### Main mode — no graph selected
+### Main (`main`)
 
 | Command | Description |
 |---------|-------------|
-| `/list` | List graphs in langgraph.json |
-| `/select` | Select a graph and assistant |
-| `/create` | Create a new graph (LLM-generated) |
-| `/deploy` | Commit, push, and reload agents on the server |
-| `/chat` | Switch to LLM chat mode |
-| `/code` | Switch to LLM code mode (with tools) |
-| `/admin` | Switch to server admin mode |
-| `/models` | List/filter models |
-| `/use` | Select a model |
+| `/dev` | Graph development mode |
+| `/exec` | Execute graphs and assistants |
+| `/llm` | LLM chat and code mode |
+| `/server` | Server management |
+| `/settings` | CLI settings |
 | `/version` | Show the application version |
-| `/help` | Show available commands |
-| `/exit` | Quit |
 
-### Main mode — graph selected
+### Dev (`dev`)
 
-#### Running agents
+Requires the CLI to be started within a langgraph code repository.
 
 | Command | Description |
 |---------|-------------|
-| `/run` | Run on the server (streaming, in thread) |
-| `/runwait` | Run and wait for result (no streaming, in thread) |
-| `/runsl` | Stateless run (streaming, no thread history) |
-| `/runslwait` | Stateless run and wait (no streaming, no thread) |
-| `/runs` | List recent runs for the active thread |
+| `/list` | List all graphs from the current repo |
+| `/select` | Select an existing graph to work with |
+| `/create` | Create a new graph with LLM guidance |
+| `/status` | Show git status |
+| `/commit` | Commit all changes |
 
-`/run` and `/runwait` are conversational — messages are stored in the active
-thread and the agent has access to previous turns. `/runsl` and `/runslwait`
-are stateless — each invocation is independent with no memory.
+### Dev > Graph (`dev:[graph_id]:[mode]`)
 
-#### Graph management
+LLM-driven editing. Free text is sent as edit instructions.
 
 | Command | Description |
 |---------|-------------|
-| `/edit` | Edit selected graph (LLM conversation; regen on save) |
-| `/compile` | Regenerate `__init__.py` from `definition.json` |
-| `/graph` | Visualize the selected graph |
-| `/delete` | Delete this graph + langgraph.json entry |
-| `/select` | Switch to a different graph |
-| `/create` | Create a new graph |
+| `/normal` | Confirm every destructive operation |
+| `/plan` | Read-only tools, no edits |
+| `/auto` | Auto-approve all tool calls |
+| `/compile` | Compile the selected graph |
+| `/delete` | Delete the selected graph |
+| `/preview` | Visualize the selected graph |
+| `/status` | Show git status |
+| `/commit` | Commit all changes |
 
-#### Assistants
+### Exec (`exec[server]`)
 
-| Command | Description |
-|---------|-------------|
-| `/assistants` | List assistants for the selected graph |
-| `/assistant create` | Create a new assistant with custom context |
-| `/assistant update` | Update the active assistant's context |
-| `/assistant delete` | Delete an assistant |
-
-#### Threads
+Requires a selected server.
 
 | Command | Description |
 |---------|-------------|
-| `/threads` | List threads — switch to a previous conversation |
-| `/thread` | Show current thread info and conversation |
-| `/thread new` | Start a new thread (keeps previous) |
-| `/thread delete` | Delete a thread |
-| `/clc` | Reset the active thread (deletes and creates new) |
-
-#### Git and deploy
-
-| Command | Description |
-|---------|-------------|
+| `/list` | List all available graphs (from server) |
+| `/select` | Select a graph |
 | `/deploy` | Commit, push, and reload agents on the server |
-| `/status` | Show git status (in agents repo) |
-| `/commit` | Commit all changes (in agents repo) |
 
-#### General
+### Exec > Graph (`exec[server]:[graph_id]`)
 
 | Command | Description |
 |---------|-------------|
-| `/chat` | Switch to LLM chat mode |
-| `/code` | Switch to LLM code mode (with tools) |
-| `/admin` | Switch to admin mode |
-| `/help` | Show available commands |
-| `/exit` | Quit |
+| `/select` | Select an assistant |
+| `/thread` | Select a thread |
+| `/create` | Create a new assistant with custom context |
+| `/search` | Search for assistants |
+| `/show` | Display the graph (ASCII diagram from server) |
+| `/test` | Stateless run (no thread history) |
+| `/run` | Create a stateful run (interactive: mode, thread, message) |
+| `/threads` | List all threads (filtered by graph) |
+| `/delthread` | Delete a thread |
+| `/delallthreads` | Delete all threads (filtered by graph) |
 
-### Chat mode
+### Exec > Assistant (`exec[server]:[graph_id]:[assistant]`)
 
 | Command | Description |
 |---------|-------------|
-| `/models` | List/filter models |
-| `/search` | Fuzzy search for models |
+| `/thread` | Select a thread |
+| `/show` | Display assistant details |
+| `/update` | Update assistant context |
+| `/delete` | Delete the assistant |
+| `/test` | Stateless run |
+| `/run` | Create a stateful run (interactive: mode, thread, message) |
+| `/threads` | List all threads (filtered by graph + assistant) |
+| `/delthread` | Delete a thread |
+| `/delallthreads` | Delete all threads (filtered by graph + assistant) |
+
+#### /run flow
+
+The `/run` command prompts interactively:
+
+1. **Execution mode**: Stream output, Wait for output, or Background
+2. **Create new thread?**: yes/no
+3. If yes — optional thread name
+4. If no — select from existing threads
+5. **Message**: the input to send
+
+Threads are created with `graph_id`, `assistant_id`, and optional `name` in
+metadata. Thread listings are filtered by the current scope.
+
+### Exec > Thread (`exec[server]:[graph]:[assistant]:[thread]`)
+
+| Command | Description |
+|---------|-------------|
+| `/details` | Show thread details |
+| `/state` | Show the thread state (messages) |
+| `/history` | Show the thread checkpoint history |
+| `/delete` | Delete the thread |
+| `/update` | Update the thread |
+| `/runs` | List runs for this thread |
+| `/select` | Select a run |
+
+### Exec > Run (`exec[server]:[graph]:[assistant]:[thread]:[run]`)
+
+| Command | Description |
+|---------|-------------|
+| `/details` | Get details for this run |
+| `/delete` | Delete this run |
+| `/cancel` | Cancel this run |
+
+### LLM (`llm`)
+
+| Command | Description |
+|---------|-------------|
+| `/chat` | Chat with LLM |
+| `/code` | LLM with tool use |
+| `/models` | List all models with filter |
 | `/fetchmodels` | Refresh model list from APIs |
-| `/use` | Select a model |
-| `/debug` | Inspect last LLM request/response |
-| `/cls` | Clear screen |
-| `/clc` | Clear conversation history |
-| `/code` | Switch to code mode |
-| `/home` | Return to home |
-| `/help` | Show available commands |
-| `/exit` | Quit |
+| `/use` | Select a LLM model |
 
-Any text that doesn't start with `/` is sent as an LLM prompt.
+### LLM > Chat (`llm:chat`)
 
-### Code mode
+Free text is sent as an LLM prompt.
 
 | Command | Description |
 |---------|-------------|
-| `/plan` | Approve every tool call |
-| `/auto` | Auto-approve reads, approve writes |
-| `/edit` | Auto-approve all tool calls |
-| `/models` | List/filter models |
-| `/search` | Fuzzy search for models |
-| `/fetchmodels` | Refresh model list from APIs |
-| `/use` | Select a model |
+| `/clear` | Clear conversation history |
+| `/compact` | Compact conversation history |
 | `/debug` | Inspect last LLM request/response |
-| `/cls` | Clear screen |
-| `/clc` | Clear conversation history |
-| `/chat` | Switch to chat mode |
-| `/home` | Return to home |
-| `/help` | Show available commands |
-| `/exit` | Quit |
 
-Any text that doesn't start with `/` is sent as a coding task with tool access.
+### LLM > Code (`llm:code:[mode]`)
 
-### Edit mode
-
-Available after `/edit` on a selected graph.
+Free text is sent as a coding task with tool access.
 
 | Command | Description |
 |---------|-------------|
-| `/plan` | Approve every tool call |
-| `/auto` | Auto-approve reads, approve writes |
-| `/run` | Run the graph in the active thread |
+| `/plan` | All tool calls require approval |
+| `/auto` | Writes require approval |
+| `/edit` | No approvals |
+| `/clear` | Clear conversation history |
+| `/compact` | Compact conversation history |
 | `/debug` | Inspect last LLM request/response |
-| `/cls` | Clear screen |
-| `/clc` | Reset the active thread |
-| `/done` | Exit edit mode |
-| `/help` | Show available commands |
-| `/exit` | Quit |
 
-Any text that doesn't start with `/` is sent as an edit instruction.
-
-### Admin mode
+### Server (`server`)
 
 | Command | Description |
 |---------|-------------|
-| `/settings` | CLI settings (servers, API keys, defaults) |
-| `/server` | Manage langosh-server (info, config, keys, reload) |
-| `/home` | Return to home |
-| `/help` | Show available commands |
-| `/exit` | Quit |
+| `/list` | List all configured servers |
+| `/select` | Select a server |
+| `/add` | Add a server |
+| `/update` | Update a server |
+| `/delete` | Delete a server |
 
-#### /settings
+### Server > Selected (`server:[name]`)
 
-Interactive menu to view and edit CLI-side settings:
+| Command | Description |
+|---------|-------------|
+| `/list` | List all configured servers |
+| `/select` | Switch to a different server |
+| `/info` | Server version, graphs, status |
+| `/reload` | Hot-reload agent repo (langosh server only) |
+| `/config` | Show and edit server config (langosh server only) |
+| `/apikeys` | Show and edit API keys (langosh server only) |
 
-- **Servers** — add, edit, remove, and switch between named servers. Each
-  server has a name, URL, API key, and a `langosh_server` flag (indicates
-  whether the server supports langosh-server admin endpoints)
-- Anthropic / OpenAI API keys
-- Default provider and model
-- AWS Bedrock region
-- Max tokens and max tool turns
+### Server > Config (`server:[name]:config`)
 
-Servers are stored in `~/.langosh/settings.json` under the `servers` key:
+| Command | Description |
+|---------|-------------|
+| `/show` | Show server configuration |
+| `/reset` | Reset entire server configuration |
+| `/configure` | Configure server config step by step |
+
+### Server > API Keys (`server:[name]:apikeys`)
+
+| Command | Description |
+|---------|-------------|
+| `/list` | List all API keys |
+| `/create` | Create an API key |
+| `/delete` | Delete an API key |
+| `/rotate` | Rotate an API key |
+
+### Settings (`settings`)
+
+| Command | Description |
+|---------|-------------|
+| `/show` | Show all settings |
+| `/configure` | Update settings interactively |
+
+Settings stored in `~/.langosh/settings.json`:
 
 ```json
 {
@@ -207,36 +256,34 @@ Servers are stored in `~/.langosh/settings.json` under the `servers` key:
     "local": {"url": "http://localhost:8001", "api_key": null, "langosh_server": true},
     "cloud": {"url": "https://cloud.langgraph.com", "api_key": "lgp-key", "langosh_server": false}
   },
-  "active_server": "local"
+  "active_server": "local",
+  "anthropic_api_key": "...",
+  "default_provider": "anthropic",
+  "max_tokens": 4096
 }
 ```
-
-#### /server
-
-Interactive menu for server management (only available when the active server
-has `langosh_server: true`):
-
-- **Info** — server version, graphs, status
-- **Reload** — hot-reload agents on the server
-- **Config** — view and edit server configuration
-- **Keys** — list API keys
-- **Key create** — create an API key
-- **Key delete** — delete an API key
-- **Key rotate** — rotate an API key
 
 ## Project structure
 
 ```
 src/langosh/
   main.py                    # CLI entrypoint and REPL
-  repl.py                    # Interactive loop with mode system
+  repl.py                    # Interactive loop, model loading
   input.py                   # Prompt toolkit input with completion + history
   state.py                   # Shared mutable state, Rich console with theme
-  settings.py / config.py    # Settings and configuration
+  settings.py / config.py    # Settings and configuration (multi-server)
+  modes/
+    __init__.py              # Mode base class, ModeStack, @command decorator
+    main.py                  # MainMode (root)
+    dev.py                   # DevMode, DevGraphMode
+    exec_.py                 # ExecMode, ExecGraphMode, ExecAssistantMode,
+                             #   ExecThreadMode, ExecRunMode
+    llm.py                   # LlmMode, ChatMode, CodeMode
+    server.py                # ServerMode, SelectedServerMode,
+                             #   ServerConfigMode, ServerApiKeysMode
+    settings_.py             # SettingsMode
   commands/
-    typer_cmds.py            # Registered typer commands (/models, /use, /search)
-    slash_handlers.py        # All slash command handlers
-    menus.py                 # Command menus per mode
+    typer_cmds.py            # Typer commands (/models, /use, /search, /version)
   llm/
     providers.py             # Multi-provider LLM dispatch
     model_catalog.py         # Dynamic model discovery

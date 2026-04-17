@@ -6,7 +6,9 @@ from . import Mode, command
 class MainMode(Mode):
 
     def path_label(self) -> str:
-        return "main"
+        import langosh.state as state
+        server = state.active_server_name
+        return f"main[{server}]" if server else "main"
 
     @command("dev", "Graph development mode")
     def cmd_dev(self, parts):
@@ -36,8 +38,18 @@ class MainMode(Mode):
 
     @command("server", "Server management")
     def cmd_server(self, parts):
-        from .server import ServerMode
-        self._stack.push(ServerMode())
+        import langosh.state as st
+        from ..settings import get_active_server_name, get_servers
+
+        active = get_active_server_name()
+        servers = get_servers()
+
+        if active and active in servers:
+            from .server import SelectedServerMode
+            self._stack.push(SelectedServerMode(active))
+        else:
+            from .server import ServerMode
+            self._stack.push(ServerMode())
         return "continue"
 
     @command("settings", "CLI settings")

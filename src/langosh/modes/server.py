@@ -7,28 +7,8 @@ import langosh.state as state
 from . import Mode, command
 
 
-class ServerMode(Mode):
-    """Server mode — list and select configured servers."""
-
-    def path_label(self) -> str:
-        return "server"
-
-    def on_enter(self) -> None:
-        from ..settings import get_active_server_name, get_servers
-        servers = get_servers()
-        active = get_active_server_name()
-        state.console.print("[bold cyan]Server mode.[/bold cyan]")
-        if servers:
-            for sname, info in servers.items():
-                marker = "\u25cf" if sname == active else "\u25cb"
-                stype = "langosh" if info.get("langosh_server", True) else "langgraph"
-                active_tag = " [active]" if sname == active else ""
-                state.console.print(
-                    f"  {marker} [cyan]{sname}[/cyan] -- {info.get('url', '')} [{stype}]{active_tag}"
-                )
-        else:
-            state.console.print("[dim]No servers configured.[/dim]")
-        state.console.print("[dim]Type /help for commands, /back to return.[/dim]")
+class _ServerCommandsMixin:
+    """Shared server CRUD commands for both ServerMode and SelectedServerMode."""
 
     @command("list", "List all configured servers")
     def cmd_list(self, parts):
@@ -47,7 +27,7 @@ class ServerMode(Mode):
             )
         return "continue"
 
-    @command("select", "Select a server from the list")
+    @command("select", "Select a server")
     def cmd_select(self, parts):
         import questionary
         from ..settings import get_active_server_name, get_servers, set_active_server
@@ -72,8 +52,9 @@ class ServerMode(Mode):
 
         set_active_server(picked)
         state.active_server_name = picked
+        if hasattr(self, "server_name"):
+            self.server_name = picked
         state.console.print(f"[green]Selected server '{picked}'.[/green]")
-        self._stack.push(SelectedServerMode(picked))
         return "continue"
 
     @command("add", "Add a server")
@@ -163,14 +144,58 @@ class ServerMode(Mode):
         return "continue"
 
 
-class SelectedServerMode(Mode):
-    """Selected server mode — info, reload, config, and API key management."""
+class ServerMode(_ServerCommandsMixin, Mode):
+    """Server mode — no server selected yet."""
+
+    def path_label(self) -> str:
+        return "server"
+
+    def on_enter(self) -> None:
+        from ..settings import get_active_server_name, get_servers
+        servers = get_servers()
+        active = get_active_server_name()
+
+        state.console.print("[bold cyan]Server mode.[/bold cyan]")
+        if servers:
+            for sname, info in servers.items():
+                marker = "\u25cf" if sname == active else "\u25cb"
+                stype = "langosh" if info.get("langosh_server", True) else "langgraph"
+                active_tag = " [active]" if sname == active else ""
+                state.console.print(
+                    f"  {marker} [cyan]{sname}[/cyan] -- {info.get('url', '')} [{stype}]{active_tag}"
+                )
+        else:
+            state.console.print("[dim]No servers configured. Use /add.[/dim]")
+        state.console.print("[dim]Type /help for commands, /back to return.[/dim]")
+
+
+class SelectedServerMode(_ServerCommandsMixin, Mode):
+    """Selected server mode — all server commands plus info, reload, config, apikeys."""
 
     def __init__(self, server_name: str):
         self.server_name = server_name
 
     def path_label(self) -> str:
-        return self.server_name
+        return f"server[{self.server_name}]"
+
+    _LANGOSH_ONLY = {"reload", "config", "apikeys"}
+
+    def _is_langosh(self) -> bool:
+        from ..settings import get_servers
+        info = get_servers().get(self.server_name, {})
+        return info.get("langosh_server", True)
+
+    def get_menu(self) -> list[tuple[str, str]]:
+        if self._is_langosh():
+            return super().get_menu()
+        return [(cmd, desc) for cmd, desc in super().get_menu()
+                if cmd.lstrip("/") not in self._LANGOSH_ONLY]
+
+    def handle_command(self, cmd_name: str, parts: list[str]) -> str:
+        if cmd_name in self._LANGOSH_ONLY and not self._is_langosh():
+            state.console.print("[dim]Not available — not a langosh server.[/dim]")
+            return "continue"
+        return super().handle_command(cmd_name, parts)
 
     def on_enter(self) -> None:
         from ..settings import get_servers
@@ -181,66 +206,34 @@ class SelectedServerMode(Mode):
             f"[dim]({info.get('url', '?')}, {stype})[/dim]"
         )
 
-    @command("list", "List all configured servers")
-    def cmd_list(self, parts):
-        from ..settings import get_active_server_name, get_servers
-        servers = get_servers()
-        active = get_active_server_name()
-        for sname, info in servers.items():
-            marker = "\u25cf" if sname == active else "\u25cb"
-            stype = "langosh" if info.get("langosh_server", True) else "langgraph"
-            active_tag = " [active]" if sname == active else ""
-            state.console.print(
-                f"  {marker} [cyan]{sname}[/cyan] -- {info.get('url', '')} [{stype}]{active_tag}"
-            )
-        return "continue"
-
-    @command("select", "Switch to a different server")
-    def cmd_select(self, parts):
-        import questionary
-        from ..settings import get_servers, set_active_server
-
-        servers = get_servers()
-        choices = [questionary.Choice(title="\u2190 Back", value=None)]
-        for sname in servers:
-            choices.append(questionary.Choice(title=sname, value=sname))
-
-        picked = questionary.select("Switch to:", choices=choices).ask()
-        if not picked:
-            return "continue"
-
-        set_active_server(picked)
-        state.active_server_name = picked
-        self.server_name = picked
-        state.console.print(f"[green]Switched to '{picked}'.[/green]")
-        return "continue"
-
     @command("info", "Server version, graphs, status")
     def cmd_info(self, parts):
+        from rich.table import Table
         from ..agents import server_client
-        from ..settings import is_langosh_server
-
-        if not is_langosh_server():
-            # Try basic health check for non-langosh servers
-            try:
-                ok = asyncio.run(server_client.health_check())
-                status = "[green]reachable[/green]" if ok else "[red]unreachable[/red]"
-                state.console.print(f"  Server: {status}")
-            except Exception:
-                state.console.print("[red]Server unreachable.[/red]")
-            return "continue"
 
         try:
             info = asyncio.run(server_client.server_info())
         except Exception as e:
             state.console.print(f"[bold red]Server error:[/bold red] {e}")
             return "continue"
+
+        table = Table(show_header=False, padding=(0, 2), box=None)
+        table.add_column(style="bold")
+        table.add_column()
+
         for key, value in info.items():
-            if isinstance(value, (dict, list)):
-                import json as _json
-                state.console.print(f"  [cyan]{key}:[/cyan] {_json.dumps(value, indent=2)}")
+            if isinstance(value, dict):
+                # Flatten nested dicts (e.g. flags, host)
+                items = ", ".join(
+                    f"{k}={v}" for k, v in value.items() if v is not None
+                )
+                table.add_row(key, items or "--")
+            elif isinstance(value, list):
+                table.add_row(key, ", ".join(str(v) for v in value) or "--")
             else:
-                state.console.print(f"  [cyan]{key}:[/cyan] {value}")
+                table.add_row(key, str(value) if value is not None else "--")
+
+        state.console.print(table)
         return "continue"
 
     @command("reload", "Hot-reload agent repo (langosh server only)")

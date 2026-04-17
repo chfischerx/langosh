@@ -55,6 +55,7 @@ class Mode:
         items.extend([
             ("/help", "Show available commands"),
             ("/back", "Go back to parent mode"),
+            ("/home", "Return to main mode"),
             ("/cls", "Clear screen"),
             ("/exit", "Quit"),
         ])
