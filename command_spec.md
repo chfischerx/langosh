@@ -88,7 +88,7 @@ Notes:
 - run: creates a stateful run for the selected graph (default assistant)
 - threads: list all threads to the current graph
 
-Run command prompts the user with the following questions:
+For run command, prompt the user with the following questions:
 - execution mode: background, stream output, wait for output
 - create new thread: yes/no
 - if new thread = no -> select a thread

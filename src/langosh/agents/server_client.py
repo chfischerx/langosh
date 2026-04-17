@@ -146,9 +146,9 @@ async def get_assistant_schemas(assistant_id: str) -> dict:
     return await _client().assistants.get_schemas(assistant_id)
 
 
-async def create_thread() -> dict:
+async def create_thread(*, metadata: dict | None = None) -> dict:
     """Create a new conversation thread."""
-    return await _client().threads.create()
+    return await _client().threads.create(metadata=metadata)
 
 
 async def get_thread(thread_id: str) -> dict:
@@ -156,9 +156,11 @@ async def get_thread(thread_id: str) -> dict:
     return await _client().threads.get(thread_id)
 
 
-async def search_threads(limit: int = 20) -> list[dict]:
-    """POST /threads/search — list recent threads."""
-    return list(await _client().threads.search(limit=limit))
+async def search_threads(
+    limit: int = 20, *, metadata: dict | None = None
+) -> list[dict]:
+    """POST /threads/search — list recent threads, optionally filtered by metadata."""
+    return list(await _client().threads.search(limit=limit, metadata=metadata))
 
 
 async def delete_thread(thread_id: str) -> None:
@@ -315,6 +317,22 @@ async def wait_run(
                 break
 
     return {"text": text}
+
+
+async def background_run(
+    assistant_id: str,
+    thread_id: str,
+    messages: list[dict],
+    *,
+    context: dict | None = None,
+) -> dict:
+    """Fire-and-forget run. Returns the Run object immediately."""
+    client = _client()
+    kwargs: dict[str, Any] = {"input": {"messages": messages}}
+    if context:
+        kwargs["context"] = context
+    result = await client.runs.create(thread_id, assistant_id, **kwargs)
+    return result
 
 
 async def list_runs(thread_id: str, limit: int = 10) -> list[dict]:

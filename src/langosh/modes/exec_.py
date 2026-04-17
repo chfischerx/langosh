@@ -7,6 +7,263 @@ import langosh.state as state
 from . import Mode, command
 
 
+class _ThreadCommandsMixin:
+    """Shared thread commands for graph and assistant modes.
+
+    Expects the host class to have `graph_id` and optionally `assistant_id`.
+    """
+
+    def _thread_metadata_filter(self) -> dict:
+        """Build metadata filter dict for the current scope."""
+        meta = {"graph_id": self.graph_id}
+        if getattr(self, "assistant_id", None):
+            meta["assistant_id"] = self.assistant_id
+        return meta
+
+    @command("threads", "List all threads")
+    def cmd_threads(self, parts):
+        from ..agents import server_client
+
+        try:
+            threads = asyncio.run(server_client.search_threads(
+                limit=20, metadata=self._thread_metadata_filter(),
+            ))
+        except Exception as e:
+            state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        if not threads:
+            state.console.print("[dim]No threads found.[/dim]")
+            return "continue"
+
+        for t in threads:
+            tid = t["thread_id"][:8]
+            status = t.get("status", "?")
+            updated = t.get("updated_at", "")[:16].replace("T", " ")
+            meta = t.get("metadata") or {}
+            name = meta.get("name", "")
+            name_col = f"  {name}" if name else ""
+            state.console.print(f"  {tid}  {status:12} {updated}{name_col}")
+        return "continue"
+
+    @command("delthread", "Delete a thread")
+    def cmd_delthread(self, parts):
+        import questionary
+        from ..agents import server_client
+
+        try:
+            threads = asyncio.run(server_client.search_threads(
+                limit=20, metadata=self._thread_metadata_filter(),
+            ))
+        except Exception as e:
+            state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        if not threads:
+            state.console.print("[dim]No threads found.[/dim]")
+            return "continue"
+
+        choices = [questionary.Choice(title="\u2190 Back", value=None)]
+        for t in threads:
+            tid = t["thread_id"][:8]
+            updated = t.get("updated_at", "")[:16].replace("T", " ")
+            meta = t.get("metadata") or {}
+            name = meta.get("name", "")
+            label = f"{tid}  {updated}  {name}" if name else f"{tid}  {updated}"
+            choices.append(questionary.Choice(title=label, value=t))
+
+        picked = questionary.select("Delete which thread?", choices=choices).ask()
+        if not picked:
+            return "continue"
+
+        confirm = questionary.confirm(f"Delete thread {picked['thread_id'][:8]}?", default=False).ask()
+        if confirm:
+            try:
+                asyncio.run(server_client.delete_thread(picked["thread_id"]))
+                state.console.print(f"[green]Deleted thread {picked['thread_id'][:8]}.[/green]")
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
+        return "continue"
+
+    @command("delallthreads", "Delete all threads")
+    def cmd_delallthreads(self, parts):
+        import questionary
+        from ..agents import server_client
+
+        try:
+            threads = asyncio.run(server_client.search_threads(
+                limit=100, metadata=self._thread_metadata_filter(),
+            ))
+        except Exception as e:
+            state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        if not threads:
+            state.console.print("[dim]No threads found.[/dim]")
+            return "continue"
+
+        confirm = questionary.confirm(
+            f"Delete all {len(threads)} threads?", default=False
+        ).ask()
+        if not confirm:
+            state.console.print("[dim]Cancelled.[/dim]")
+            return "continue"
+
+        deleted = 0
+        for t in threads:
+            try:
+                asyncio.run(server_client.delete_thread(t["thread_id"]))
+                deleted += 1
+            except Exception:
+                state.console.print(f"[yellow]Failed to delete {t['thread_id'][:8]}[/yellow]")
+        state.console.print(f"[green]Deleted {deleted} thread(s).[/green]")
+        return "continue"
+
+
+def _run_interactive(mode, parts, assistant_id: str, graph_id: str, *, metadata_filter: dict) -> str:
+    """Shared /run flow: execution mode, thread selection, message, then execute."""
+    import questionary
+    from ..agents import server_client
+
+    # 1. Execution mode
+    exec_mode = questionary.select(
+        "Execution mode:",
+        choices=["Stream output", "Wait for output", "Background"],
+    ).ask()
+    if exec_mode is None:
+        state.console.print("[dim]Cancelled.[/dim]")
+        return "continue"
+
+    # 2. New thread or existing?
+    new_thread = questionary.confirm("Create new thread?", default=True).ask()
+    if new_thread is None:
+        state.console.print("[dim]Cancelled.[/dim]")
+        return "continue"
+
+    if new_thread:
+        thread_name = questionary.text("Thread name (optional):").ask()
+        if thread_name is None:
+            state.console.print("[dim]Cancelled.[/dim]")
+            return "continue"
+
+        meta = {"graph_id": graph_id, "assistant_id": assistant_id}
+        if thread_name.strip():
+            meta["name"] = thread_name.strip()
+
+        try:
+            thread = asyncio.run(server_client.create_thread(metadata=meta))
+        except Exception as e:
+            state.console.print(f"[bold red]Error creating thread:[/bold red] {e}")
+            return "continue"
+        tid = thread["thread_id"]
+    else:
+        # Select existing thread
+        try:
+            threads = asyncio.run(server_client.search_threads(
+                limit=20, metadata=metadata_filter,
+            ))
+        except Exception as e:
+            state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        if not threads:
+            state.console.print("[dim]No threads found. Creating a new one.[/dim]")
+            meta = {"graph_id": graph_id, "assistant_id": assistant_id}
+            try:
+                thread = asyncio.run(server_client.create_thread(metadata=meta))
+            except Exception as e:
+                state.console.print(f"[bold red]Error creating thread:[/bold red] {e}")
+                return "continue"
+            tid = thread["thread_id"]
+        else:
+            choices = [questionary.Choice(title="\u2190 Back", value=None)]
+            for t in threads:
+                t_id = t["thread_id"][:8]
+                updated = t.get("updated_at", "")[:16].replace("T", " ")
+                t_meta = t.get("metadata") or {}
+                name = t_meta.get("name", "")
+                label = f"{t_id}  {updated}  {name}" if name else f"{t_id}  {updated}"
+                choices.append(questionary.Choice(title=label, value=t))
+
+            picked = questionary.select("Select thread:", choices=choices).ask()
+            if not picked:
+                state.console.print("[dim]Cancelled.[/dim]")
+                return "continue"
+            tid = picked["thread_id"]
+
+    # 3. Message
+    rest = parts[1].strip() if len(parts) > 1 else ""
+    if not rest:
+        rest = questionary.text("Message:").ask()
+        if not rest or not rest.strip():
+            state.console.print("[dim]Cancelled.[/dim]")
+            return "continue"
+    msg = rest.strip()
+
+    messages = [{"role": "user", "content": msg}]
+
+    # 4. Execute based on mode
+    if exec_mode == "Stream output":
+        async def _on_event(event_type, data):
+            if event_type == "token":
+                state.console.print(data.get("text", ""), end="", soft_wrap=True, highlight=False)
+            elif event_type == "tool_call":
+                state.console.print(f"\n[dim]  \u21b3 calling {data.get('name', '?')}...[/dim]")
+            elif event_type == "tool_result":
+                preview = data.get("preview", "")[:80]
+                state.console.print(f"[dim]  \u21b3 done ({preview})[/dim]")
+            elif event_type == "error":
+                state.console.print(f"\n[bold red]Error:[/bold red] {data.get('message', '')}")
+
+        state.console.print(f"\n[dim]Streaming run (thread {tid[:8]})...[/dim]\n")
+        try:
+            result = asyncio.run(
+                server_client.stream_run(
+                    assistant_id=assistant_id, thread_id=tid,
+                    messages=messages, on_event=_on_event,
+                )
+            )
+            state.console.print(f"\n[dim]run {result.get('run_id', '?')[:8]}[/dim]")
+        except KeyboardInterrupt:
+            state.console.print("\n[yellow]Interrupted.[/yellow]")
+        except Exception as e:
+            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
+
+    elif exec_mode == "Wait for output":
+        state.console.print(f"\n[dim]Running (wait) on thread {tid[:8]}...[/dim]")
+        try:
+            with state.console.status("[dim]Waiting for response...[/dim]"):
+                result = asyncio.run(
+                    server_client.wait_run(
+                        assistant_id=assistant_id, thread_id=tid,
+                        messages=messages,
+                    )
+                )
+            text = result.get("text", "")
+            state.console.print(f"\n{text}")
+        except KeyboardInterrupt:
+            state.console.print("\n[yellow]Interrupted.[/yellow]")
+        except Exception as e:
+            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
+
+    elif exec_mode == "Background":
+        state.console.print(f"\n[dim]Submitting background run (thread {tid[:8]})...[/dim]")
+        try:
+            result = asyncio.run(
+                server_client.background_run(
+                    assistant_id=assistant_id, thread_id=tid,
+                    messages=messages,
+                )
+            )
+            run_id = result.get("run_id", "?")[:8]
+            status = result.get("status", "?")
+            state.console.print(f"[green]Run submitted.[/green] [dim]run {run_id} ({status})[/dim]")
+        except Exception as e:
+            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
+
+    return "continue"
+
+
 class ExecMode(Mode):
     """Exec mode — select and run graphs on the active server."""
 
@@ -148,7 +405,7 @@ class ExecMode(Mode):
         return "continue"
 
 
-class ExecGraphMode(Mode):
+class ExecGraphMode(_ThreadCommandsMixin, Mode):
     """Graph mode under exec — manage assistants, threads, and runs."""
 
     def __init__(self, server_name: str, graph_id: str):
@@ -200,7 +457,47 @@ class ExecGraphMode(Mode):
 
     @command("thread", "Select a thread")
     def cmd_thread(self, parts):
-        state.console.print("[dim]Not implemented yet.[/dim]")
+        import questionary
+        from ..agents import server_client
+
+        meta_filter = {"graph_id": self.graph_id}
+        try:
+            threads = asyncio.run(server_client.search_threads(limit=20, metadata=meta_filter))
+        except Exception as e:
+            state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return "continue"
+
+        if not threads:
+            state.console.print("[dim]No threads found. Use /run to create one.[/dim]")
+            return "continue"
+
+        choices = [questionary.Choice(title="\u2190 Back", value=None)]
+        for t in threads:
+            tid = t["thread_id"][:8]
+            status = t.get("status", "?")
+            updated = t.get("updated_at", "")[:16].replace("T", " ")
+            meta = t.get("metadata") or {}
+            name = meta.get("name", "")
+            label = f"{tid}  {status:12} {updated}  {name}" if name else f"{tid}  {status:12} {updated}"
+            choices.append(questionary.Choice(title=label, value=t))
+
+        picked = questionary.select("Select thread:", choices=choices).ask()
+        if not picked:
+            return "continue"
+
+        # Resolve assistant_id from thread metadata or use default
+        thread_meta = picked.get("metadata") or {}
+        aid = thread_meta.get("assistant_id", "")
+        if not aid:
+            try:
+                assistant = asyncio.run(server_client.ensure_assistant(self.graph_id))
+                aid = assistant["assistant_id"]
+            except Exception:
+                aid = ""
+
+        self._stack.push(
+            ExecThreadMode(self.server_name, self.graph_id, aid, picked["thread_id"])
+        )
         return "continue"
 
     @command("create", "Create a new assistant with custom context")
@@ -368,7 +665,6 @@ class ExecGraphMode(Mode):
 
     @command("run", "Create a stateful run (default assistant)")
     def cmd_run(self, parts):
-        import questionary
         from ..agents import server_client
 
         try:
@@ -377,73 +673,13 @@ class ExecGraphMode(Mode):
             state.console.print(f"[bold red]Server error:[/bold red] {e}")
             return "continue"
 
-        rest = parts[1].strip() if len(parts) > 1 else ""
-        if not rest:
-            rest = questionary.text("Message:").ask()
-            if not rest or not rest.strip():
-                state.console.print("[dim]Cancelled.[/dim]")
-                return "continue"
-        msg = rest.strip()
-
-        # Create thread for stateful run
-        try:
-            thread = asyncio.run(server_client.create_thread())
-        except Exception as e:
-            state.console.print(f"[bold red]Error creating thread:[/bold red] {e}")
-            return "continue"
-
-        async def _on_event(event_type, data):
-            if event_type == "token":
-                state.console.print(data.get("text", ""), end="", soft_wrap=True, highlight=False)
-            elif event_type == "tool_call":
-                state.console.print(f"\n[dim]  \u21b3 calling {data.get('name', '?')}...[/dim]")
-            elif event_type == "tool_result":
-                preview = data.get("preview", "")[:80]
-                state.console.print(f"[dim]  \u21b3 done ({preview})[/dim]")
-            elif event_type == "error":
-                state.console.print(f"\n[bold red]Error:[/bold red] {data.get('message', '')}")
-
-        tid = thread["thread_id"]
-        state.console.print(f"\n[dim]Running on server (thread {tid[:8]})...[/dim]\n")
-        try:
-            result = asyncio.run(
-                server_client.stream_run(
-                    assistant_id=assistant["assistant_id"],
-                    thread_id=tid,
-                    messages=[{"role": "user", "content": msg}],
-                    on_event=_on_event,
-                )
-            )
-            state.console.print(f"\n[dim]run {result.get('run_id', '?')[:8]}[/dim]")
-        except KeyboardInterrupt:
-            state.console.print("\n[yellow]Interrupted.[/yellow]")
-        except Exception as e:
-            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
-        return "continue"
-
-    @command("threads", "List all threads")
-    def cmd_threads(self, parts):
-        from ..agents import server_client
-
-        try:
-            threads = asyncio.run(server_client.search_threads(limit=20))
-        except Exception as e:
-            state.console.print(f"[bold red]Error:[/bold red] {e}")
-            return "continue"
-
-        if not threads:
-            state.console.print("[dim]No threads found.[/dim]")
-            return "continue"
-
-        for t in threads:
-            tid = t["thread_id"][:8]
-            status = t.get("status", "?")
-            updated = t.get("updated_at", "")[:16].replace("T", " ")
-            state.console.print(f"  {tid}  {status:12} {updated}")
-        return "continue"
+        return _run_interactive(
+            self, parts, assistant["assistant_id"], self.graph_id,
+            metadata_filter={"graph_id": self.graph_id},
+        )
 
 
-class ExecAssistantMode(Mode):
+class ExecAssistantMode(_ThreadCommandsMixin, Mode):
     """Assistant mode — run with a specific assistant, manage threads."""
 
     def __init__(self, server_name: str, graph_id: str, assistant_id: str, assistant_name: str = ""):
@@ -466,8 +702,9 @@ class ExecAssistantMode(Mode):
         import questionary
         from ..agents import server_client
 
+        meta_filter = {"graph_id": self.graph_id, "assistant_id": self.assistant_id}
         try:
-            threads = asyncio.run(server_client.search_threads(limit=20))
+            threads = asyncio.run(server_client.search_threads(limit=20, metadata=meta_filter))
         except Exception as e:
             state.console.print(f"[bold red]Error:[/bold red] {e}")
             return "continue"
@@ -481,7 +718,10 @@ class ExecAssistantMode(Mode):
             tid = t["thread_id"][:8]
             status = t.get("status", "?")
             updated = t.get("updated_at", "")[:16].replace("T", " ")
-            choices.append(questionary.Choice(title=f"{tid}  {status:12} {updated}", value=t))
+            meta = t.get("metadata") or {}
+            name = meta.get("name", "")
+            label = f"{tid}  {status:12} {updated}  {name}" if name else f"{tid}  {status:12} {updated}"
+            choices.append(questionary.Choice(title=label, value=t))
 
         picked = questionary.select("Select thread:", choices=choices).ask()
         if not picked:
@@ -637,71 +877,10 @@ class ExecAssistantMode(Mode):
 
     @command("run", "Create a stateful run")
     def cmd_run(self, parts):
-        import questionary
-        from ..agents import server_client
-
-        rest = parts[1].strip() if len(parts) > 1 else ""
-        if not rest:
-            rest = questionary.text("Message:").ask()
-            if not rest or not rest.strip():
-                state.console.print("[dim]Cancelled.[/dim]")
-                return "continue"
-        msg = rest.strip()
-
-        try:
-            thread = asyncio.run(server_client.create_thread())
-        except Exception as e:
-            state.console.print(f"[bold red]Error creating thread:[/bold red] {e}")
-            return "continue"
-
-        async def _on_event(event_type, data):
-            if event_type == "token":
-                state.console.print(data.get("text", ""), end="", soft_wrap=True, highlight=False)
-            elif event_type == "tool_call":
-                state.console.print(f"\n[dim]  \u21b3 calling {data.get('name', '?')}...[/dim]")
-            elif event_type == "tool_result":
-                preview = data.get("preview", "")[:80]
-                state.console.print(f"[dim]  \u21b3 done ({preview})[/dim]")
-            elif event_type == "error":
-                state.console.print(f"\n[bold red]Error:[/bold red] {data.get('message', '')}")
-
-        tid = thread["thread_id"]
-        state.console.print(f"\n[dim]Running on server (thread {tid[:8]})...[/dim]\n")
-        try:
-            result = asyncio.run(
-                server_client.stream_run(
-                    assistant_id=self.assistant_id,
-                    thread_id=tid,
-                    messages=[{"role": "user", "content": msg}],
-                    on_event=_on_event,
-                )
-            )
-            state.console.print(f"\n[dim]run {result.get('run_id', '?')[:8]}[/dim]")
-        except KeyboardInterrupt:
-            state.console.print("\n[yellow]Interrupted.[/yellow]")
-        except Exception as e:
-            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
-        return "continue"
-
-    @command("threads", "List all threads")
-    def cmd_threads(self, parts):
-        from ..agents import server_client
-
-        try:
-            threads = asyncio.run(server_client.search_threads(limit=20))
-        except Exception as e:
-            state.console.print(f"[bold red]Error:[/bold red] {e}")
-            return "continue"
-
-        if not threads:
-            state.console.print("[dim]No threads found.[/dim]")
-            return "continue"
-
-        for t in threads:
-            tid = t["thread_id"][:8]
-            status = t.get("status", "?")
-            updated = t.get("updated_at", "")[:16].replace("T", " ")
-            state.console.print(f"  {tid}  {status:12} {updated}")
+        return _run_interactive(
+            self, parts, self.assistant_id, self.graph_id,
+            metadata_filter={"graph_id": self.graph_id, "assistant_id": self.assistant_id},
+        )
         return "continue"
 
 

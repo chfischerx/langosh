@@ -36,10 +36,12 @@ class Mode:
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         cls._commands = {}
-        for name in list(vars(cls)):
-            attr = getattr(cls, name, None)
-            if callable(attr) and hasattr(attr, "_cmd_name"):
-                cls._commands[attr._cmd_name] = (attr, attr._cmd_desc)
+        # Walk MRO to pick up @command methods from mixins
+        for klass in cls.__mro__:
+            for name in vars(klass):
+                attr = getattr(klass, name, None)
+                if callable(attr) and hasattr(attr, "_cmd_name") and attr._cmd_name not in cls._commands:
+                    cls._commands[attr._cmd_name] = (attr, attr._cmd_desc)
 
     def path_label(self) -> str:
         """Label for this mode in the mode bar."""
