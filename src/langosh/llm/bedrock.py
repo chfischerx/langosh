@@ -1,6 +1,7 @@
-"""AWS Bedrock Converse multi-turn tool-calling loop with prompt caching."""
+"""AWS Bedrock Converse multi-turn tool-calling loop with streaming + prompt caching."""
 
 import asyncio
+import json as _json
 import logging
 
 from ..config import get_settings
@@ -61,6 +62,86 @@ def _to_bedrock_msgs(msgs: list[dict]) -> list[dict]:
     return out
 
 
+def _drain_stream_sync(stream, on_chunk) -> dict:
+    """Iterate Bedrock event stream synchronously; call on_chunk(text) for text deltas.
+
+    Returns a dict with: content_blocks, stop_reason, usage.
+    """
+    content_blocks: list[dict] = []
+    # Track per-index content block being built.
+    current: dict[int, dict] = {}
+    stop_reason = ""
+    usage: dict = {}
+
+    for event in stream:
+        if "contentBlockStart" in event:
+            start = event["contentBlockStart"]
+            idx = start.get("contentBlockIndex", 0)
+            block_start = start.get("start", {})
+            if "toolUse" in block_start:
+                tu = block_start["toolUse"]
+                current[idx] = {
+                    "toolUse": {
+                        "toolUseId": tu["toolUseId"],
+                        "name": tu["name"],
+                        "_input_json": "",
+                    }
+                }
+            else:
+                current[idx] = {"text": ""}
+        elif "contentBlockDelta" in event:
+            cbd = event["contentBlockDelta"]
+            idx = cbd.get("contentBlockIndex", 0)
+            delta = cbd.get("delta", {})
+            slot = current.setdefault(idx, {"text": ""})
+            if "text" in delta:
+                text = delta["text"]
+                slot.setdefault("text", "")
+                slot["text"] += text
+                on_chunk(text)
+            elif "toolUse" in delta:
+                tu_delta = delta["toolUse"]
+                # If slot has no toolUse yet (no contentBlockStart seen), initialize
+                if "toolUse" not in slot:
+                    slot = {"toolUse": {"toolUseId": "", "name": "", "_input_json": ""}}
+                    current[idx] = slot
+                if "input" in tu_delta:
+                    slot["toolUse"]["_input_json"] += tu_delta["input"]
+        elif "contentBlockStop" in event:
+            idx = event["contentBlockStop"].get("contentBlockIndex", 0)
+            slot = current.get(idx)
+            if slot is None:
+                continue
+            if "toolUse" in slot:
+                tu = slot["toolUse"]
+                input_json = tu.pop("_input_json", "")
+                try:
+                    tu["input"] = _json.loads(input_json) if input_json else {}
+                except _json.JSONDecodeError:
+                    tu["input"] = {}
+            content_blocks.append(slot)
+        elif "messageStop" in event:
+            stop_reason = event["messageStop"].get("stopReason", "")
+        elif "metadata" in event:
+            usage = event["metadata"].get("usage", {}) or {}
+
+    return {"content": content_blocks, "stop_reason": stop_reason, "usage": usage}
+
+
+async def _stream_turn(bedrock, request_body: dict, on_event):
+    """Stream a Bedrock converse turn; emit token events; return (content, stop_reason, usage)."""
+    resp = await asyncio.to_thread(bedrock.converse_stream, **request_body)
+    stream = resp["stream"]
+    loop = asyncio.get_event_loop()
+
+    def _on_chunk(text: str) -> None:
+        if on_event is not None:
+            asyncio.run_coroutine_threadsafe(on_event("token", {"text": text}), loop)
+
+    result = await asyncio.to_thread(_drain_stream_sync, stream, _on_chunk)
+    return result
+
+
 async def call_bedrock_with_tools(
     model_id: str,
     api_key: str | None,
@@ -71,7 +152,7 @@ async def call_bedrock_with_tools(
     on_event: ToolEventCallback | None = None,
     max_tool_turns: int | None = None,
 ) -> LLMResult:
-    """Multi-turn Bedrock Converse call with tool-use and prompt caching."""
+    """Multi-turn Bedrock Converse call with streaming tool-use and prompt caching."""
     _require_sdk()
     import os
 
@@ -103,18 +184,16 @@ async def call_bedrock_with_tools(
             "inferenceConfig": {"maxTokens": settings.max_tokens},
         }
         capture_request(request_body)
-        resp = await asyncio.to_thread(bedrock.converse, **request_body)
-        capture_response(resp)
-        usage = resp.get("usage", {})
+        result = await _stream_turn(bedrock, request_body, on_event)
+        capture_response(result)
+        usage = result["usage"] or {}
         total_input += usage.get("inputTokens", 0)
         total_output += usage.get("outputTokens", 0)
         total_cache_read += usage.get("cacheReadInputTokens", 0)
         total_cache_write += usage.get("cacheWriteInputTokens", 0)
 
-        stop_reason = resp.get("stopReason", "")
-        output = resp.get("output", {})
-        msg = output.get("message", {})
-        content_blocks = msg.get("content", [])
+        stop_reason = result["stop_reason"]
+        content_blocks = result["content"]
 
         def _result(text: str) -> LLMResult:
             return LLMResult(
@@ -170,8 +249,9 @@ async def call_bedrock_simple(
     api_key: str | None,
     system: str,
     messages: list[dict],
+    on_event: ToolEventCallback | None = None,
 ) -> LLMResult:
-    """Single-turn Bedrock Converse call without tools."""
+    """Single-turn Bedrock Converse call without tools, streaming tokens."""
     _require_sdk()
     import os
 
@@ -188,15 +268,15 @@ async def call_bedrock_simple(
         "inferenceConfig": {"maxTokens": settings.max_tokens},
     }
     capture_request(request_body)
-    resp = await asyncio.to_thread(bedrock.converse, **request_body)
-    capture_response(resp)
-    usage = resp.get("usage", {})
-    output = resp.get("output", {})
-    msg = output.get("message", {})
-    content_blocks = msg.get("content", [])
+    result = await _stream_turn(bedrock, request_body, on_event)
+    capture_response(result)
+    usage = result["usage"] or {}
+    content_blocks = result["content"]
     text_parts = [b["text"] for b in content_blocks if "text" in b]
     return LLMResult(
         text="\n".join(text_parts).strip(),
         input_tokens=usage.get("inputTokens", 0),
         output_tokens=usage.get("outputTokens", 0),
+        cache_read_input_tokens=usage.get("cacheReadInputTokens", 0),
+        cache_creation_input_tokens=usage.get("cacheWriteInputTokens", 0),
     )

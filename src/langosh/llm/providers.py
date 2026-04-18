@@ -87,13 +87,13 @@ async def call_llm_simple(
     if provider == "anthropic":
         from .anthropic import call_anthropic_simple
 
-        return await call_anthropic_simple(model_id, api_key, system, messages)
+        return await call_anthropic_simple(model_id, api_key, system, messages, on_event)
     if provider in ("openai", "deepseek", "xai"):
         from .openai_compat import call_openai_simple
 
-        return await call_openai_simple(provider, model_id, api_key, system, messages)
+        return await call_openai_simple(provider, model_id, api_key, system, messages, on_event)
     if provider == "bedrock_converse":
         from .bedrock import call_bedrock_simple
 
-        return await call_bedrock_simple(model_id, api_key, system, messages)
+        return await call_bedrock_simple(model_id, api_key, system, messages, on_event)
     raise ValueError(f"Unsupported provider: {provider}")
