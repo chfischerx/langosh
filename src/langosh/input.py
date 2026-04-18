@@ -11,7 +11,8 @@ from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout.containers import Float, FloatContainer, HSplit, Window
+from prompt_toolkit.layout.containers import ConditionalContainer, Float, FloatContainer, HSplit, Window
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.layout import Layout
 from prompt_toolkit.layout.menus import CompletionsMenu
@@ -50,6 +51,8 @@ _style = PtStyle.from_dict({
     "separator": "fg:ansidarkgray",
     "mode-label": "bold fg:ansibrightcyan",
     "prompt": "bold fg:ansibrightcyan",
+    "spinner": "fg:ansicyan",
+    "status": "fg:ansidarkgray",
     "completion-menu": "bg:#1a1a2e fg:#8888aa",
     "completion-menu.completion.current": "bg:#e2e2e2 fg:#000000 bold",
     "completion-menu.meta.completion": "bg:#1a1a2e fg:#555577",
@@ -77,6 +80,25 @@ def set_mode_stack(stack: ModeStack) -> None:
     """Wire up the global mode stack reference for the input system."""
     global _mode_stack
     _mode_stack = stack
+
+
+_SPINNER_FRAMES = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"
+_processing_message: str | None = None
+
+
+def set_processing(message: str | None) -> None:
+    """Show/hide a spinner line above the mode bar. Thread-safe."""
+    global _processing_message
+    _processing_message = message
+
+
+def _status_line() -> list[tuple[str, str]]:
+    """Format the spinner line (shown only when processing)."""
+    import time as _time
+    if not _processing_message:
+        return [("", "")]
+    frame = _SPINNER_FRAMES[int(_time.monotonic() * 10) % len(_SPINNER_FRAMES)]
+    return [("class:spinner", f"{frame} "), ("class:status", _processing_message)]
 
 
 def _mode_bar() -> str:
@@ -118,6 +140,13 @@ def get_input() -> str | None:
     )
 
     body = HSplit([
+        ConditionalContainer(
+            Window(
+                FormattedTextControl(_status_line),
+                height=1,
+            ),
+            filter=Condition(lambda: _processing_message is not None),
+        ),
         Window(
             FormattedTextControl(lambda: [("class:separator", _mode_bar())]),
             height=1,

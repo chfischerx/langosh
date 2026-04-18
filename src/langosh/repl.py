@@ -11,7 +11,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 
 import langosh.state as state
 
-from .input import get_input, model_display_name, set_mode_stack
+from .input import get_input, model_display_name, set_mode_stack, set_processing
 from .modes import ModeStack
 from .modes.main import MainMode
 
@@ -214,6 +214,8 @@ def repl(app) -> None:
                 continue
 
             def _process(text: str) -> None:
+                model_name = model_display_name() or "LLM"
+                set_processing(f"Calling {model_name}...")
                 try:
                     mode_stack.handle_free_text(text)
                 except KeyboardInterrupt:
@@ -221,6 +223,7 @@ def repl(app) -> None:
                 except Exception as e:
                     state.console.print(f"[bold red]Error:[/bold red] {e}")
                 finally:
+                    set_processing(None)
                     _worker_lock.release()
 
             threading.Thread(target=_process, args=(line,), daemon=True).start()
