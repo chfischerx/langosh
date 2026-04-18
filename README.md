@@ -1,7 +1,255 @@
-# langosh
+# Langosh
 
-A CLI to build, test, and deploy LangGraph agents — with live streaming,
-LangChain docs lookup, and subagent delegation baked in.
+**A guided CLI to create, test, and run LangGraph agents.**
+
+LangChain and LangGraph are exceptional frameworks. LangChain popularized the
+composable agent stack, and LangGraph is the most versatile tool available
+today for building stateful, multi-step agents — from simple ReAct loops to
+complex custom `StateGraph` pipelines with conditional routing, checkpointing,
+and interrupts. The teams have built tools that power agents in production at
+serious scale.
+
+That versatility comes with a cost: the learning curve is steep. There's a lot
+of surface area to absorb before you can confidently ship something — message
+types, state reducers, the Platform API, threads vs. runs vs. assistants,
+streaming modes, checkpointers, subgraphs, tool calling patterns. Newcomers
+often spend more time reading docs than building.
+
+**Langosh exists to shorten that curve.** It's an opinionated CLI around two
+core workflows:
+
+1. **Graph development** — create a new graph with LLM guidance, edit it
+   iteratively, compile it, deploy it, test it. One command per step, in the
+   order you actually do them.
+2. **Graph execution** — pick a server, pick a graph, pick an assistant,
+   manage threads, make runs. The concepts are exposed as a mode tree so you
+   always know what scope you're in and what commands make sense here.
+
+The LLM side is first-class too: built-in chat with live LangChain docs
+lookup (MCP), a code mode with full file/git/exec tooling, subagents for
+focused research, and live token streaming across every provider
+(Anthropic, OpenAI-compatible, AWS Bedrock, Claude Agent SDK). All with a
+single-window input widget that stays responsive while work runs in the
+background.
+
+The goal is a CLI where `create → deploy → test → run` feels obvious — so you
+can spend your time building agents instead of reading about them.
+
+## Contents
+
+- [Works with LangSmith — and with langosh-server](#works-with-langsmith--and-with-langosh-server)
+- [LLM-assisted graph development](#llm-assisted-graph-development)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Navigation](#navigation)
+- [Mode tree](#mode-tree)
+- [Universal commands](#universal-commands)
+- [Commands](#commands)
+- [LLM providers](#llm-providers)
+- [Built-in tools](#built-in-tools)
+- [Project structure](#project-structure)
+- [License](#license)
+
+## Works with LangSmith — and with langosh-server
+
+Langosh speaks the **LangGraph Platform API**. That means it works out of the
+box with **LangSmith** (LangChain's hosted platform): configure a LangSmith
+server URL and API key in `/server /add`, and you can browse graphs, create
+assistants, manage threads, make runs, and watch execution from the CLI,
+exactly as you would against any LangGraph Platform deployment.
+
+For self-hosting, Langosh ships with a companion project, **[langosh-server](../langosh-server)**,
+which re-implements the same LangGraph Platform API — so the CLI can't tell
+the difference between a LangSmith-hosted server and a local langosh-server.
+What langosh-server adds on top is a small set of **deployment endpoints**
+that make the create/test/run loop instant:
+
+- **Hot reload** (`POST /admin/reload`) — point the server at a git-backed
+  langgraph-agents repo; push a change, hit reload, and the new graph is live
+  without restarting.
+- **Admin + config endpoints** — inspect active graphs, manage API keys,
+  update server config from the CLI.
+- **No build step** — edit your graph JSON or functions, `/deploy` from the
+  CLI, and the server picks up the new code on the next run.
+
+The `langosh_server: true` flag on a server entry tells the CLI to expose the
+extra admin commands (`/reload`, `/config`, `/apikeys`). For LangSmith or any
+plain LangGraph Platform server, set it to `false` and Langosh will show only
+the standard Platform commands.
+
+**End-to-end workflow:**
+
+```
+$ langosh
+> /graphs             # dev mode: local langgraph-agents repo
+> /create             # LLM generates definition.json + functions
+> /select new-graph   # iterate on the graph (plan/auto/edit)
+> "add retry logic"   # LLM edits the graph
+> /deploy             # git commit + push + hot reload on the server
+> /back /back /exec   # switch to exec mode (on the server)
+> /select new-graph   # server now knows about the new graph
+> /test               # stateless test run
+> /run                # stateful run with a thread
+```
+
+Same CLI, same commands — whether you're developing against your own
+Langosh Server or hitting a managed LangSmith deployment.
+
+## LLM-assisted graph development
+
+A core design decision in Langosh: **graphs are authored as JSON, not
+Python**. When you ask the LLM to create or modify a graph, it edits a
+structured `definition.json` file. Langosh's compiler then turns that JSON
+into a runnable Python module.
+
+### Why JSON?
+
+LangGraph graphs are normally written as Python — you instantiate a
+`StateGraph`, add nodes, wire edges, compile, and export. That works well
+for humans, but it's a poor target for an LLM: a tiny formatting mistake
+anywhere in the file can break imports, and the LLM has to simultaneously
+reason about Python syntax *and* graph semantics.
+
+JSON sidesteps both problems:
+
+- **Structured, validated surface** — the LLM only has to get the *graph
+  shape* right. No imports, no syntax, no whitespace. A schema tells it
+  which fields exist and what they mean.
+- **Reliable partial edits** — the editor can do surgical patches
+  (`edit_definition(old_str, new_str)`) without risking syntactic damage
+  that would leave an un-loadable Python module on disk.
+- **Deterministic output** — compilation from JSON → Python is the same
+  every time, so you never get "the LLM's version" of the same graph — you
+  get the compiler's.
+- **Easy diffing** — a JSON diff of two definitions shows exactly what
+  changed in the graph itself, not noise from formatting.
+
+### Graph types
+
+**Simple agents** (`type: "simple"`) — a single ReAct loop. One system
+prompt, a list of tool names, and a context schema. The LLM decides which
+tools to call at runtime.
+
+```json
+{
+  "type": "simple",
+  "system_prompt": "You are a research assistant.",
+  "tools": ["web_search", "fetch_url"],
+  "context": {
+    "model_name": {"type": "str", "default": "anthropic:claude-sonnet-4-5-20250929"}
+  }
+}
+```
+
+**Custom agents** (`type: "custom"`) — explicit `state`, `nodes`, `edges`.
+Use when you need deterministic routing, staged pipelines, or multiple LLM
+roles. Node types:
+
+- **`type: "tool"`** — direct tool call as a graph node. Arguments come
+  from state or are static. No LLM reasoning.
+- **`type: "llm"`** — LLM text generation. Optional `"tools": [...]`
+  turns the node into a mini ReAct sub-agent.
+- **`type: "function"`** — arbitrary async Python. Escape hatch for logic
+  that doesn't fit the other types.
+
+### Tool auto-discovery
+
+Langosh never asks the LLM to *guess* which tools exist — it tells it
+exactly what's available. Tools live in the sibling `langosh-agents` repo
+as plain `async def` functions:
+
+```python
+# langosh-agents/tools/web_search.py
+async def web_search(query: str, max_results: int = 5) -> list[dict]:
+    """Search the web and return a list of {title, url, snippet} results."""
+    ...
+```
+
+A build step (`scripts/build_manifest.py` in langosh-agents) introspects
+every tool — type hints, defaults, docstring — and writes a single
+`tools/manifest.json` with name, module path, parameter schema, and
+description.
+
+Langosh reads that manifest at runtime via `tool_catalog.load_tool_catalog()`
+and splices it into the **builder prompt**. The LLM sees each tool's exact
+signature, parameter names, types, and what each tool is for. When you ask
+the LLM to add a tool node, it picks from a known, typed catalog — no
+hallucinated tool names, no invented parameters.
+
+Both usage paths — as a `tool` graph node *and* as a tool in an `llm`
+node's tool list — resolve to the same underlying `async def` function. A
+tool is written once and usable deterministically or via LLM reasoning.
+
+### How the catalog flows
+
+```
+langosh-agents/tools/*.py           (source of truth: async functions)
+         │
+         v  scripts/build_manifest.py
+langosh-agents/tools/manifest.json  (name, module, params, description)
+         │
+         v  tool_catalog.load_tool_catalog()
+Langosh CLI                         (reads manifest as pure JSON — no tool imports)
+         │
+         ├─> Builder prompt         (LLM sees exact tool signatures + parameter details)
+         └─> Codegen                (emits import statements + validates args)
+```
+
+### The graph compiler
+
+When you run `/compile` (or `/deploy`, which compiles implicitly), Langosh
+turns `definition.json` into a runnable Python module at
+`graphs/<graph_id>/__init__.py`.
+
+The compiler (`src/langosh/graphs/codegen.py`) does:
+
+1. **Schema validation** — checks the JSON against the type-specific
+   schema. Missing fields, invalid node types, unknown state field types,
+   or edges pointing to non-existent nodes all surface as clear errors
+   before any code is generated.
+2. **Tool resolution** — for every tool referenced in `tool` nodes and
+   `llm.tools` lists, looks it up in the manifest, gets its module path,
+   and emits a correct `from langosh_agents.tools.<module> import <fn>`
+   line. Unknown tools raise `ValueError` with the tool name — no silent
+   runtime `ImportError` at server boot.
+3. **State class generation** — the `state` dict becomes a `TypedDict` (or
+   `MessagesState` subclass if `"messages"` is present) with the declared
+   field types, including reducers for list/dict fields.
+4. **Node emission** — each node type generates its own function:
+   - `tool` nodes → a wrapper that reads args from state/context and calls
+     the tool.
+   - `llm` nodes → a function that formats the prompt template, calls the
+     LLM, and (for tool-using llm nodes) emits a nested `create_react_agent`
+     with the right tool list.
+   - `function` nodes → the provided async code inline.
+5. **Graph wiring** — a single `graph = StateGraph(State)` block with
+   `add_node` / `add_edge` / `add_conditional_edges` calls matching the
+   JSON edges.
+6. **Compiled export** — `.compile()` and `graph = ...` so LangGraph's
+   runtime can pick it up by pointer from `langgraph.json`.
+
+The generated module is pure, deterministic output — you can read it,
+review it in git, and if you want, edit it directly. But typically you
+edit the JSON, compile, deploy, and move on.
+
+### Putting it together
+
+```
+  /graphs  /create                   # LLM produces definition.json
+     ↓
+  /select <id>  /edit                # iterative LLM edits on the JSON
+     ↓
+  /compile                            # JSON → Python module
+     ↓
+  /deploy                             # git commit + push + server reload
+     ↓
+  /exec  /select <id>  /test | /run  # run on the server
+```
+
+Every step above is one command. The LLM never touches runtime Python;
+you never hand-write state reducers; the server always sees a freshly
+compiled module that matches the JSON you just approved.
 
 ## Requirements
 
@@ -249,9 +497,9 @@ The current sub-mode is shown below the input line and can be cycled with
 | `/select` | Switch to a different server |
 | `/add` / `/update` / `/delete` | Server CRUD |
 | `/info` | Server version, graphs, status |
-| `/reload` | Hot-reload agent repo (langosh server only) |
-| `/config` | Show and edit server config (langosh server only) |
-| `/apikeys` | Show and edit API keys (langosh server only) |
+| `/reload` | Hot-reload agent repo (Langosh Server only) |
+| `/config` | Show and edit server config (Langosh Server only) |
+| `/apikeys` | Show and edit API keys (Langosh Server only) |
 
 ### Server > Config (`server:[name]:config`)
 
@@ -411,47 +659,6 @@ src/langosh/
   server/
     server_client.py         # HTTP client for langosh-server / LangGraph Platform
 ```
-
-## Agent tools and codegen
-
-The langosh CLI creates and compiles LangGraph agents. Agent tool metadata
-comes from the sibling `langosh-agents` repo's `tools/manifest.json`, which
-is generated from the actual tool source files
-(see [langosh-agents README](../langosh-agents/README.md)).
-
-### How the tool catalog flows
-
-```
-langosh-agents/tools/*.py        (async functions with type hints + docstrings)
-        |
-        v  scripts/build_manifest.py
-langosh-agents/tools/manifest.json  (name, module, params, description)
-        |
-        v  tool_catalog.load_tool_catalog()
-langosh CLI                          (reads manifest as pure JSON — no tool imports)
-        |
-        +-->  Builder prompt          (LLM sees tool signatures + parameter details)
-        +-->  Codegen                 (emits import statements + validates args)
-```
-
-### Agent types
-
-**Simple agents** (`type: "simple"`) use `create_react_agent` — the LLM
-dynamically decides which tools to call at runtime.
-
-**Custom agents** (`type: "custom"`) use `StateGraph` with explicit nodes and
-edges. Tools can be used in two ways:
-
-- **`type: "tool"` nodes** — the tool function is called directly as a graph
-  node with arguments mapped from state. No LLM involved.
-- **`type: "llm"` nodes with `"tools": [...]`** — codegen emits a
-  `create_react_agent` sub-agent. The LLM dynamically calls the listed tools,
-  then the result is written back to state.
-
-Both paths use the same `async def` functions from `langosh-agents/tools/`.
-The manifest provides build-time metadata; the functions' type hints and
-docstrings provide runtime metadata (LangGraph derives JSON schemas from them
-via langchain's `create_tool` introspection).
 
 ## License
 
