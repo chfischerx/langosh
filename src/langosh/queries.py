@@ -33,18 +33,18 @@ def send_query(text: str) -> None:
     state.chat_messages.append({"role": "user", "content": text})
     messages_to_send = apply_window("chat", state.chat_messages, provider, model_id)
 
-    state.console.print(f"[dim]Calling {model_display_name() or model_id}...[/dim]")
     start = time.monotonic()
     try:
-        result = asyncio.run(
-            call_llm_simple(
-                provider=provider,
-                model_id=model_id,
-                api_key=None,
-                system=CHAT_SYSTEM_PROMPT,
-                messages=messages_to_send,
+        with state.console.status(f"[dim]Calling {model_display_name() or model_id}...[/dim]"):
+            result = asyncio.run(
+                call_llm_simple(
+                    provider=provider,
+                    model_id=model_id,
+                    api_key=None,
+                    system=CHAT_SYSTEM_PROMPT,
+                    messages=messages_to_send,
+                )
             )
-        )
     except KeyboardInterrupt:
         if state.chat_messages and state.chat_messages[-1].get("role") == "user":
             state.chat_messages.pop()

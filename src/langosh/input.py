@@ -202,6 +202,7 @@ def get_input() -> str | None:
         style=_style,
         full_screen=False,
         erase_when_done=True,
+        refresh_interval=0.1,
     )
     result = prompt_app.run()
     _trim_history()
