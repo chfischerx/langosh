@@ -22,7 +22,7 @@ class _ThreadCommandsMixin:
 
     @command("threads", "List all threads")
     def cmd_threads(self, parts):
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             threads = asyncio.run(server_client.search_threads(
@@ -49,7 +49,7 @@ class _ThreadCommandsMixin:
     @command("delthread", "Delete a thread")
     def cmd_delthread(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             threads = asyncio.run(server_client.search_threads(
@@ -88,7 +88,7 @@ class _ThreadCommandsMixin:
     @command("delallthreads", "Delete all threads")
     def cmd_delallthreads(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             threads = asyncio.run(server_client.search_threads(
@@ -124,7 +124,7 @@ def _deploy_work() -> None:
     """Perform git commit+push and server reload. Runs in worker thread."""
     import subprocess
     from datetime import datetime
-    from ..agents import server_client
+    from ..server import server_client
     from ..settings import get_agents_path, is_langosh_server
 
     agents_path = str(get_agents_path())
@@ -209,7 +209,7 @@ async def _default_on_event(event_type, data):
 def _execute_run(exec_mode: str, assistant_id: str, thread_id: str | None,
                  messages: list[dict]) -> None:
     """Execute the run in the chosen mode. Called from a worker thread."""
-    from ..agents import server_client
+    from ..server import server_client
 
     if exec_mode == "Stream output":
         result = asyncio.run(
@@ -246,7 +246,7 @@ def _execute_run(exec_mode: str, assistant_id: str, thread_id: str | None,
 def _stateless_test(graph_id: str, parts: list[str]) -> str:
     """Shared stateless test: ensure assistant, pick exec mode, prompt for message, run."""
     import questionary
-    from ..agents import server_client
+    from ..server import server_client
 
     try:
         assistant = asyncio.run(server_client.ensure_assistant(graph_id))
@@ -287,7 +287,7 @@ def _stateless_test(graph_id: str, parts: list[str]) -> str:
 def _run_interactive(mode, parts, assistant_id: str, graph_id: str, *, metadata_filter: dict) -> str:
     """Shared /run flow: execution mode, thread selection, message, then execute."""
     import questionary
-    from ..agents import server_client
+    from ..server import server_client
 
     # 1. Execution mode
     exec_mode = questionary.select(
@@ -395,7 +395,7 @@ class ExecMode(Mode):
     @command("list", "List all available graphs")
     def cmd_list(self, parts):
         from rich.table import Table
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             assistants = asyncio.run(server_client.list_assistants(limit=100))
@@ -428,7 +428,7 @@ class ExecMode(Mode):
     @command("select", "Select a graph")
     def cmd_select(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         graph_id = parts[1].strip() if len(parts) > 1 else None
         if not graph_id:
@@ -473,7 +473,7 @@ class ExecGraphMode(_ThreadCommandsMixin, Mode):
     @command("select", "Select an assistant")
     def cmd_select(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             assistants = asyncio.run(server_client.list_graph_assistants(self.graph_id))
@@ -509,7 +509,7 @@ class ExecGraphMode(_ThreadCommandsMixin, Mode):
     @command("thread", "Select a thread")
     def cmd_thread(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         meta_filter = {"graph_id": self.graph_id}
         try:
@@ -555,7 +555,7 @@ class ExecGraphMode(_ThreadCommandsMixin, Mode):
     def cmd_create(self, parts):
         import json as _json
         import questionary
-        from ..agents import registry, server_client
+        from ..graphs import registry; from ..server import server_client
 
         name = parts[1].strip() if len(parts) > 1 else None
         if not name:
@@ -611,7 +611,7 @@ class ExecGraphMode(_ThreadCommandsMixin, Mode):
 
     @command("search", "Search for assistants")
     def cmd_search(self, parts):
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             assistants = asyncio.run(server_client.list_graph_assistants(self.graph_id))
@@ -640,7 +640,7 @@ class ExecGraphMode(_ThreadCommandsMixin, Mode):
 
     @command("show", "Display the graph")
     def cmd_show(self, parts):
-        from ..agents import server_client
+        from ..server import server_client
         from langchain_core.runnables.graph import Graph
 
         try:
@@ -672,7 +672,7 @@ class ExecGraphMode(_ThreadCommandsMixin, Mode):
 
     @command("run", "Create a stateful run (default assistant)")
     def cmd_run(self, parts):
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             assistant = asyncio.run(server_client.ensure_assistant(self.graph_id))
@@ -707,7 +707,7 @@ class ExecAssistantMode(_ThreadCommandsMixin, Mode):
     @command("thread", "Select a thread")
     def cmd_thread(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         meta_filter = {"graph_id": self.graph_id, "assistant_id": self.assistant_id}
         try:
@@ -744,7 +744,7 @@ class ExecAssistantMode(_ThreadCommandsMixin, Mode):
 
     @command("show", "Display assistant details")
     def cmd_show(self, parts):
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             a = asyncio.run(server_client.get_assistant(self.assistant_id))
@@ -769,7 +769,7 @@ class ExecAssistantMode(_ThreadCommandsMixin, Mode):
     def cmd_update(self, parts):
         import json as _json
         import questionary
-        from ..agents import registry, server_client
+        from ..graphs import registry; from ..server import server_client
 
         graph_dir = registry.graph_dir(self.graph_id)
         defn_path = graph_dir / "definition.json"
@@ -824,7 +824,7 @@ class ExecAssistantMode(_ThreadCommandsMixin, Mode):
     @command("delete", "Delete the assistant")
     def cmd_delete(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         confirm = questionary.confirm(
             f"Delete assistant '{self.assistant_name}'?", default=False
@@ -844,7 +844,7 @@ class ExecAssistantMode(_ThreadCommandsMixin, Mode):
     @command("test", "Stateless run")
     def cmd_test(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         rest = parts[1].strip() if len(parts) > 1 else ""
         if not rest:
@@ -908,7 +908,7 @@ class ExecThreadMode(Mode):
 
     @command("details", "Show thread details")
     def cmd_details(self, parts):
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             thread = asyncio.run(server_client.get_thread(self.thread_id))
@@ -925,7 +925,7 @@ class ExecThreadMode(Mode):
     @command("state", "Show the thread state")
     def cmd_state(self, parts):
         import json as _json
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             ts = asyncio.run(server_client.get_thread_state(self.thread_id))
@@ -957,7 +957,7 @@ class ExecThreadMode(Mode):
 
     @command("history", "Show the thread history")
     def cmd_history(self, parts):
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             history = asyncio.run(server_client.get_thread_history(self.thread_id))
@@ -978,7 +978,7 @@ class ExecThreadMode(Mode):
     @command("delete", "Delete the thread")
     def cmd_delete(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         confirm = questionary.confirm(f"Delete thread {self.thread_id[:8]}?", default=False).ask()
         if not confirm:
@@ -1000,7 +1000,7 @@ class ExecThreadMode(Mode):
 
     @command("runs", "List runs for this thread")
     def cmd_runs(self, parts):
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             runs = asyncio.run(server_client.list_runs(self.thread_id))
@@ -1022,7 +1022,7 @@ class ExecThreadMode(Mode):
     @command("select", "Select a run")
     def cmd_select(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             runs = asyncio.run(server_client.list_runs(self.thread_id))

@@ -63,7 +63,7 @@ async def ensure_assistant(graph_id: str, *, name: str | None = None) -> dict:
     # Read default context from definition.json if available
     context: dict[str, Any] | None = None
     try:
-        from .registry import graph_dir
+        from ..graphs.registry import graph_dir
 
         defn_path = graph_dir(graph_id) / "definition.json"
         if defn_path.is_file():

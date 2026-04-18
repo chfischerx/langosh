@@ -290,13 +290,15 @@ src/langosh/
     prompts/
       builder.py             # Builder system prompt (tool list from manifest)
     tools/                   # CLI-side tool implementations (for /code mode)
-  agents/
+  graphs/
     builder.py               # /create — LLM produces definition.json
     codegen.py               # /compile — definition.json -> __init__.py
     editor.py                # /edit — multi-turn LLM edit loop
+    editor_tools.py          # Tools available to the editor LLM
     tool_catalog.py          # Loads tool manifest from langosh-agents
     registry.py              # langgraph.json read/write
-    server_client.py         # HTTP client for langosh-server
+  server/
+    server_client.py         # HTTP client for langosh-server / langgraph platform
 ```
 
 ## Agent tools and codegen

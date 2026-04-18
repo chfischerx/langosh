@@ -185,10 +185,10 @@ class DevMode(_GitMixin, Mode):
 
     @command("list", "List all graphs from the current repo")
     def cmd_list(self, parts):
-        from ..agents import registry
+        from ..graphs import registry
         graphs = registry.list_graphs()
         if not graphs:
-            from ..agents.registry import langgraph_json_path
+            from ..graphs.registry import langgraph_json_path
             state.console.print(f"[dim]No graphs in {langgraph_json_path()}.[/dim]")
             return "continue"
         for i, (gid, mod) in enumerate(graphs.items(), 1):
@@ -198,7 +198,7 @@ class DevMode(_GitMixin, Mode):
     @command("create", "Create a new graph with LLM guidance")
     def cmd_create(self, parts):
         import questionary
-        from ..agents.builder import create_agent
+        from ..graphs.builder import create_agent
 
         state.console.print("[bold]Create a new graph[/bold]\n")
 
@@ -288,7 +288,7 @@ class DevMode(_GitMixin, Mode):
     @command("select", "Select an existing graph to work with")
     def cmd_select(self, parts):
         import questionary
-        from ..agents import registry
+        from ..graphs import registry
 
         graph_id = parts[1].strip() if len(parts) > 1 else None
         if not graph_id:
@@ -333,7 +333,7 @@ class DevGraphMode(_GitMixin, Mode):
         state.agent_editing = False
 
     def handle_free_text(self, text: str) -> None:
-        from ..agents.editor import send_edit_query
+        from ..graphs.editor import send_edit_query
         try:
             send_edit_query(text)
         except KeyboardInterrupt:
@@ -369,7 +369,7 @@ class DevGraphMode(_GitMixin, Mode):
     @command("compile", "Compile the selected graph")
     def cmd_compile(self, parts):
         import json as _json
-        from ..agents import codegen, registry
+        from ..graphs import codegen, registry
 
         folder = registry.graph_dir(self.graph_id)
         def_path = folder / "definition.json"
@@ -409,7 +409,7 @@ class DevGraphMode(_GitMixin, Mode):
         import shutil
         import subprocess
         import questionary
-        from ..agents import registry
+        from ..graphs import registry
         from ..settings import get_agents_path
 
         confirm = questionary.confirm(
@@ -458,7 +458,7 @@ class DevGraphMode(_GitMixin, Mode):
     @command("preview", "Visualize the selected graph")
     def cmd_preview(self, parts):
         import json as _json
-        from ..agents import registry
+        from ..graphs import registry
 
         folder = registry.graph_dir(self.graph_id)
         def_path = folder / "definition.json"

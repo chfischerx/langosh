@@ -209,7 +209,7 @@ class SelectedServerMode(_ServerCommandsMixin, Mode):
     @command("info", "Server version, graphs, status")
     def cmd_info(self, parts):
         from rich.table import Table
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             info = asyncio.run(server_client.server_info())
@@ -246,7 +246,7 @@ class SelectedServerMode(_ServerCommandsMixin, Mode):
             return "continue"
 
         def _work():
-            from ..agents import server_client
+            from ..server import server_client
             result = asyncio.run(server_client.reload_agents())
             state.console.print("[green]Agents reloaded on server.[/green]")
             if isinstance(result, dict):
@@ -300,7 +300,7 @@ class ServerConfigMode(Mode):
 
     @command("show", "Show server configuration")
     def cmd_show(self, parts):
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             schema = asyncio.run(server_client.get_config_schema())
@@ -329,7 +329,7 @@ class ServerConfigMode(Mode):
     @command("reset", "Reset entire server configuration")
     def cmd_reset(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         confirm = questionary.confirm(
             "Reset all config? Values revert to env-var fallbacks.", default=False
@@ -345,7 +345,7 @@ class ServerConfigMode(Mode):
     @command("configure", "Configure server config step by step")
     def cmd_configure(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             schema = asyncio.run(server_client.get_config_schema())
@@ -421,7 +421,7 @@ class ServerApiKeysMode(Mode):
 
     @command("list", "List all API keys")
     def cmd_list(self, parts):
-        from ..agents import server_client
+        from ..server import server_client
 
         try:
             keys = asyncio.run(server_client.list_api_keys())
@@ -443,7 +443,7 @@ class ServerApiKeysMode(Mode):
     @command("create", "Create an API key")
     def cmd_create(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         name = questionary.text("Key name:").ask()
         if not name or not name.strip():
@@ -462,7 +462,7 @@ class ServerApiKeysMode(Mode):
     @command("delete", "Delete an API key")
     def cmd_delete(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         name = questionary.text("Key name to delete:").ask()
         if not name or not name.strip():
@@ -480,7 +480,7 @@ class ServerApiKeysMode(Mode):
     @command("rotate", "Rotate an API key")
     def cmd_rotate(self, parts):
         import questionary
-        from ..agents import server_client
+        from ..server import server_client
 
         name = questionary.text("Key name to rotate:").ask()
         if not name or not name.strip():
