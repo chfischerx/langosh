@@ -12,6 +12,8 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.layout import Layout
 from prompt_toolkit.styles import Style as PtStyle
 
+from .docs_tools import DISPATCH as _DOCS_DISPATCH
+from .docs_tools import TOOLS as DOCS_TOOLS
 from .file_tools import DISPATCH as _FILE_DISPATCH
 from .file_tools import TOOLS as _FILE_TOOLS
 from .git_tools import DISPATCH as _GIT_DISPATCH
@@ -19,12 +21,13 @@ from .git_tools import TOOLS as _GIT_TOOLS
 from .python_exec import DISPATCH as _PYTHON_DISPATCH
 from .python_exec import TOOLS as _PYTHON_TOOLS
 
-ALL_TOOLS: list[dict] = _FILE_TOOLS + _GIT_TOOLS + _PYTHON_TOOLS
+ALL_TOOLS: list[dict] = _FILE_TOOLS + _GIT_TOOLS + _PYTHON_TOOLS + DOCS_TOOLS
 
-_DISPATCH: dict = {**_FILE_DISPATCH, **_GIT_DISPATCH, **_PYTHON_DISPATCH}
+_DISPATCH: dict = {**_FILE_DISPATCH, **_GIT_DISPATCH, **_PYTHON_DISPATCH, **_DOCS_DISPATCH}
 
 READ_TOOLS = {"read_file", "list_directory", "glob_files", "grep_files",
-              "git_status", "git_diff", "git_log", "git_show", "git_blame"}
+              "git_status", "git_diff", "git_log", "git_show", "git_blame",
+              "docs_search", "docs_read"}
 WRITE_TOOLS = {"write_file", "edit_file", "execute_python"}
 
 _APPROVAL_STYLE = PtStyle.from_dict({
@@ -126,36 +129,39 @@ def _show_approval_widget(tool_name: str, args: dict, console) -> str:
 def make_guarded_dispatcher(sub_mode: str, console):
     """Create a tool dispatcher that enforces approval based on sub-mode.
 
+    Reads (READ_TOOLS) are always auto-approved in every mode — they are
+    scoped to the local working directory or read-only external sources.
+
     Sub-modes:
-      plan — ask for approval on every tool call
-      auto — auto-approve reads, ask for writes
+      plan — read-only: writes are denied outright
+      auto — reads auto; writes require approval
       edit — auto-approve everything
     """
     # Track tools that have been "always allowed" this session
     always_allowed: set[str] = set()
 
-    def _needs_approval(tool_name: str) -> bool:
-        if sub_mode == "edit":
-            return False
-        if tool_name in always_allowed:
-            return False
-        if sub_mode == "plan":
-            return True
-        # auto: only writes need approval
-        return tool_name in WRITE_TOOLS
-
     async def _ask_approval(name: str, args: dict) -> str:
         return await asyncio.to_thread(_show_approval_widget, name, args, console)
 
     async def guarded_dispatch(name: str, args: dict) -> str:
-        if _needs_approval(name):
-            choice = await _ask_approval(name, args)
-            if choice == "deny":
-                console.print(f"[dim]  ✗ {name} denied[/dim]")
-                return "Tool call denied by user."
-            if choice == "always":
-                always_allowed.add(name)
-            console.print(f"[dim]  ✓ {name} approved[/dim]")
+        # Reads always allowed
+        if name in READ_TOOLS:
+            return await dispatch_tool(name, args)
+        # Edit mode and always-allowed tools skip approval
+        if sub_mode == "edit" or name in always_allowed:
+            return await dispatch_tool(name, args)
+        # Plan mode: writes are denied without prompting
+        if sub_mode == "plan":
+            console.print(f"[dim]  ✗ {name} denied (plan mode is read-only)[/dim]")
+            return "Tool call denied: plan mode is read-only."
+        # Auto mode: ask approval for writes
+        choice = await _ask_approval(name, args)
+        if choice == "deny":
+            console.print(f"[dim]  ✗ {name} denied[/dim]")
+            return "Tool call denied by user."
+        if choice == "always":
+            always_allowed.add(name)
+        console.print(f"[dim]  ✓ {name} approved[/dim]")
         return await dispatch_tool(name, args)
 
     return guarded_dispatch

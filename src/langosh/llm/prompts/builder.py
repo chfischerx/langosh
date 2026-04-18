@@ -6,10 +6,19 @@ actually wire up. Add or remove tools by editing the tool source files and
 re-running `scripts/build_manifest.py` in langosh-agents.
 """
 
-from ...agents.tool_catalog import load_tool_catalog
+from ...graphs.tool_catalog import load_tool_catalog
 
 
 _PROMPT_TEMPLATE = """You are an expert LangGraph agent designer. You help users create AI agents by generating agent definition JSON.
+
+## Documentation tools (use these for any non-trivial design question)
+
+You have live access to the official LangChain/LangGraph/LangSmith docs:
+- `docs_search(query)` — semantic search. Use FIRST when you need authoritative guidance on state schemas, StateGraph patterns, reducers, checkpointing, interrupts, tool calling, subgraphs, etc.
+- `docs_read(command)` — read-only shell commands (cat/head/ls/tree/find/grep/rg) over the docs filesystem. Use to fetch full `.mdx` content after search.
+
+Consult the docs before inventing patterns from memory. Use them especially when the user asks about an API or capability you are not 100% sure is current.
+
 
 You can create two types of agents:
 
@@ -206,6 +215,8 @@ When in editing mode, you have these tools:
 - `read_function(name)` — source of one function file
 - `write_function(name, code)` — write/rewrite a function file
 - `edit_function(name, old_str, new_str)` — targeted edit in a function
+- `docs_search(query)` — search LangChain/LangGraph/LangSmith docs
+- `docs_read(command)` — read doc pages (cat/head/ls/tree/find/grep/rg)
 
 Prefer `edit_function` and `edit_definition` for small changes. Only use
 `write_function` when rewriting most of a function. Only output a full

@@ -341,17 +341,17 @@ class DevGraphMode(_GitMixin, Mode):
         except Exception as e:
             state.console.print(f"[bold red]Error:[/bold red] {e}")
 
-    @command("normal", "Confirm every destructive operation")
-    def cmd_normal(self, parts):
-        return self._set_llm_mode("normal", parts)
-
-    @command("plan", "Read-only tools, no edits")
+    @command("plan", "Read-only: reads auto, writes denied")
     def cmd_plan(self, parts):
         return self._set_llm_mode("plan", parts)
 
-    @command("auto", "Auto-approve all tool calls")
+    @command("auto", "Reads auto, writes require approval")
     def cmd_auto(self, parts):
         return self._set_llm_mode("auto", parts)
+
+    @command("edit", "Auto-approve everything")
+    def cmd_edit(self, parts):
+        return self._set_llm_mode("edit", parts)
 
     def _set_llm_mode(self, mode: str, parts):
         from ..settings import set as set_setting
@@ -359,9 +359,9 @@ class DevGraphMode(_GitMixin, Mode):
         state.agent_sub_mode = mode
         set_setting("agent_sub_mode", mode)
         labels = {
-            "normal": "Confirm every destructive operation",
-            "plan": "Read-only tools, no edits",
-            "auto": "Auto-approve all tool calls",
+            "plan": "Read-only: reads auto, writes denied",
+            "auto": "Reads auto, writes require approval",
+            "edit": "Auto-approve everything",
         }
         state.console.print(f"[bold cyan]{mode}[/bold cyan] [dim]-- {labels[mode]}[/dim]")
         return "continue"

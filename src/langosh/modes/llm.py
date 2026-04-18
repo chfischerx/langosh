@@ -76,15 +76,15 @@ class CodeMode(Mode):
         except Exception as e:
             state.console.print(f"[bold red]Error:[/bold red] {e}")
 
-    @command("plan", "All tool calls require approval")
+    @command("plan", "Read-only: reads auto, writes denied")
     def cmd_plan(self, parts):
         return _set_code_sub_mode("plan")
 
-    @command("auto", "Writes require approval")
+    @command("auto", "Reads auto, writes require approval")
     def cmd_auto(self, parts):
         return _set_code_sub_mode("auto")
 
-    @command("edit", "No approvals")
+    @command("edit", "Auto-approve everything")
     def cmd_edit(self, parts):
         return _set_code_sub_mode("edit")
 
@@ -115,9 +115,9 @@ def _set_code_sub_mode(mode: str) -> str:
     state.code_sub_mode = mode
     set_setting("code_sub_mode", mode)
     labels = {
-        "plan": "All tool calls require approval",
-        "auto": "Writes require approval",
-        "edit": "No approvals",
+        "plan": "Read-only: reads auto, writes denied",
+        "auto": "Reads auto, writes require approval",
+        "edit": "Auto-approve everything",
     }
     state.console.print(f"[bold cyan]{mode}[/bold cyan] [dim]-- {labels[mode]}[/dim]")
     return "continue"

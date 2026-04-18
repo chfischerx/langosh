@@ -9,14 +9,20 @@ from ..context import apply_window
 from ..input import model_display_name
 from ..rendering import print_renderables, render_semantic
 from . import codegen, registry
-from .editor_tools import TOOLS, WRITE_TOOLS, make_editor_dispatch
+from ..llm.tools.docs_tools import DISPATCH as _DOCS_DISPATCH
+from ..llm.tools.docs_tools import TOOLS as _DOCS_TOOLS
+from .editor_tools import TOOLS as _EDITOR_TOOLS
+from .editor_tools import WRITE_TOOLS, make_editor_dispatch
+
+TOOLS = _EDITOR_TOOLS + _DOCS_TOOLS
 
 
 def _make_guarded_dispatcher(graph_id: str):
     """Create a guarded dispatcher for editor tools respecting agent_sub_mode."""
-    dispatch = make_editor_dispatch(graph_id)
+    editor_dispatch = make_editor_dispatch(graph_id)
+    dispatch = {**editor_dispatch, **_DOCS_DISPATCH}
 
-    # Build a combined dispatcher that routes to editor tools
+    # Build a combined dispatcher that routes to editor tools + docs
     async def _dispatch(name: str, args: dict) -> str:
         fn = dispatch.get(name)
         if not fn:
@@ -26,28 +32,33 @@ def _make_guarded_dispatcher(graph_id: str):
         except Exception as e:
             return f"Error executing {name}: {e}"
 
-    # Wrap with approval based on sub_mode
-    def _needs_approval(tool_name: str) -> bool:
-        if state.agent_sub_mode == "edit":
-            return False
-        if state.agent_sub_mode == "plan":
-            return True
-        # auto: reads auto-approved, writes need approval
-        return tool_name in WRITE_TOOLS
+    # Read tools (docs + definition reads) are always auto-approved.
+    READ_TOOLS = {"read_definition", "list_functions", "read_function",
+                  "docs_search", "docs_read"}
 
     always_allowed: set[str] = set()
 
     async def guarded_dispatch(name: str, args: dict) -> str:
-        if _needs_approval(name) and name not in always_allowed:
-            from ..llm.tools import _show_approval_widget
+        # Reads always allowed
+        if name in READ_TOOLS:
+            return await _dispatch(name, args)
+        # Edit mode and always-allowed tools skip approval
+        if state.agent_sub_mode == "edit" or name in always_allowed:
+            return await _dispatch(name, args)
+        # Plan mode: writes denied outright
+        if state.agent_sub_mode == "plan":
+            state.console.print(f"[dim]  ✗ {name} denied (plan mode is read-only)[/dim]")
+            return "Tool call denied: plan mode is read-only."
+        # Auto mode: ask approval for writes
+        from ..llm.tools import _show_approval_widget
 
-            choice = await asyncio.to_thread(_show_approval_widget, name, args, state.console)
-            if choice == "deny":
-                state.console.print(f"[dim]  ✗ {name} denied[/dim]")
-                return "Tool call denied by user."
-            if choice == "always":
-                always_allowed.add(name)
-            state.console.print(f"[dim]  ✓ {name} approved[/dim]")
+        choice = await asyncio.to_thread(_show_approval_widget, name, args, state.console)
+        if choice == "deny":
+            state.console.print(f"[dim]  ✗ {name} denied[/dim]")
+            return "Tool call denied by user."
+        if choice == "always":
+            always_allowed.add(name)
+        state.console.print(f"[dim]  ✓ {name} approved[/dim]")
         return await _dispatch(name, args)
 
     return guarded_dispatch

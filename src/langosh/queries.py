@@ -23,8 +23,9 @@ def send_query(text: str) -> None:
     """Send text as an LLM prompt using the active model with conversation history."""
     from .config import DEFAULT_MODELS, get_settings
     from .history import save_history
-    from .llm import call_llm_simple
+    from .llm import call_with_tools
     from .llm.prompts.chat import CHAT_SYSTEM_PROMPT
+    from .llm.tools import DOCS_TOOLS, make_guarded_dispatcher
 
     settings = get_settings()
     provider = state.active_model["provider"] or settings.default_provider
@@ -33,15 +34,26 @@ def send_query(text: str) -> None:
     state.chat_messages.append({"role": "user", "content": text})
     messages_to_send = apply_window("chat", state.chat_messages, provider, model_id)
 
+    async def _on_event(event_type: str, data: dict) -> None:
+        name = data.get("name", "")
+        if event_type == "tool_call":
+            state.console.print(f"[dim]  ↳ calling {name}...[/dim]")
+        elif event_type == "tool_result":
+            state.console.print(f"[dim]  ↳ {name} done[/dim]")
+
     start = time.monotonic()
     try:
         result = asyncio.run(
-            call_llm_simple(
+            call_with_tools(
                 provider=provider,
                 model_id=model_id,
                 api_key=None,
                 system=CHAT_SYSTEM_PROMPT,
                 messages=messages_to_send,
+                tools=DOCS_TOOLS,
+                tool_dispatcher=make_guarded_dispatcher("edit", state.console),
+                on_event=_on_event,
+                sub_mode="edit",
             )
         )
     except KeyboardInterrupt:
@@ -54,6 +66,7 @@ def send_query(text: str) -> None:
     state.chat_messages.append({"role": "assistant", "content": result["text"]})
     save_history("chat", state.chat_messages, state.chat_summary)
 
+    tool_calls = result.get("tool_calls", [])
     state.last_debug.clear()
     state.last_debug.update({
         "mode": "chat",
@@ -63,21 +76,22 @@ def send_query(text: str) -> None:
         "system_prompt": CHAT_SYSTEM_PROMPT,
         "messages_sent": messages_to_send,
         "message_count": len(messages_to_send),
-        "tools": None,
+        "tools": [t["name"] for t in DOCS_TOOLS],
         "sub_mode": None,
         "response_text": result["text"],
         "input_tokens": result["input_tokens"],
         "output_tokens": result["output_tokens"],
         "cache_read_tokens": result.get("cache_read_input_tokens", 0),
         "cache_creation_tokens": result.get("cache_creation_input_tokens", 0),
-        "tool_calls": [],
+        "tool_calls": tool_calls,
         "elapsed": elapsed,
     })
 
     print_renderables(state.console, render_semantic(result["text"]))
+    tool_info = f" | {len(tool_calls)} tool calls" if tool_calls else ""
     state.console.print(
         f"\n[dim]{format_elapsed(elapsed)} | "
-        f"{result['input_tokens']} ↑ / {result['output_tokens']} ↓[/dim]"
+        f"{result['input_tokens']} ↑ / {result['output_tokens']} ↓{tool_info}[/dim]"
     )
 
 
