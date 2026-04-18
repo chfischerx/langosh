@@ -233,10 +233,10 @@ def get_input() -> str | None:
             buf.append_to_history()
         event.app.exit(result=text)
 
-    @kb.add("escape")
+    @kb.add("escape", eager=True)
     def _dismiss(event):
         if _has_menu(buf):
-            buf.complete_state = None
+            buf.cancel_completion()
 
     @kb.add("c-c")
     def _ctrl_c(event):
@@ -261,6 +261,7 @@ def get_input() -> str | None:
         erase_when_done=True,
         refresh_interval=0.1,
     )
+    prompt_app.timeoutlen = 0.05  # speed up escape handling
     result = prompt_app.run()
     _trim_history()
     return result
