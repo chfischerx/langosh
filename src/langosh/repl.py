@@ -3,12 +3,15 @@
 import asyncio
 import shlex
 import subprocess
+import sys
+import threading
 
 import click.exceptions
+from prompt_toolkit.patch_stdout import patch_stdout
 
 import langosh.state as state
 
-from .input import erase_lines, get_input, model_display_name, set_mode_stack
+from .input import get_input, model_display_name, set_mode_stack
 from .modes import ModeStack
 from .modes.main import MainMode
 
@@ -129,81 +132,95 @@ def repl(app) -> None:
         state.console.print(f"[dim]  server: {server_url}[/dim]")
     state.console.print(f"[dim]  path:   {agents_path}[/dim]")
 
-    while True:
-        line = get_input()
-        erase_lines(3)
+    # Re-point Rich Console to sys.stdout so patch_stdout can intercept it
+    from rich.console import Console
+    from rich.theme import Theme
 
-        if line is None:
-            state.console.print("Bye!")
-            break
+    _worker_lock = threading.Lock()
 
-        line = line.strip()
-        if not line:
-            continue
+    with patch_stdout(raw=True):
+        state.console = Console(theme=Theme({"dim": "grey70"}), file=sys.stdout)
 
-        # --- Shell commands (any mode) ---
-        if line.startswith("!"):
-            cmd = line[1:].strip()
-            state.console.print(f"[dim]$ {cmd}[/dim]")
-            if cmd:
-                try:
-                    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
-                    if result.stdout:
-                        state.console.print(result.stdout.rstrip())
-                    if result.stderr:
-                        state.console.print(f"[red]{result.stderr.rstrip()}[/red]")
-                    if result.returncode != 0:
-                        state.console.print(f"[dim]exit code: {result.returncode}[/dim]")
-                except subprocess.TimeoutExpired:
-                    state.console.print("[red]Command timed out (60s)[/red]")
-                except Exception as e:
-                    state.console.print(f"[bold red]Error:[/bold red] {e}")
-            continue
+        while True:
+            line = get_input()
 
-        # --- Slash commands ---
-        if line.startswith("/"):
-            cmd_body = line[1:]
-            parts = cmd_body.split(None, 1)
-            cmd_name = parts[0].lower() if parts else ""
+            if line is None:
+                state.console.print("Bye!")
+                break
 
+            line = line.strip()
+            if not line:
+                continue
+
+            # Echo the user input as clean history
             state.console.print(f"[dim]> {line}[/dim]")
 
-            try:
-                action = mode_stack.handle_command(cmd_name, parts)
-            except KeyboardInterrupt:
-                state.console.print("\n[yellow]Interrupted.[/yellow]")
+            # --- Shell commands (any mode) ---
+            if line.startswith("!"):
+                cmd = line[1:].strip()
+                if cmd:
+                    try:
+                        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                        if result.stdout:
+                            state.console.print(result.stdout.rstrip())
+                        if result.stderr:
+                            state.console.print(f"[red]{result.stderr.rstrip()}[/red]")
+                        if result.returncode != 0:
+                            state.console.print(f"[dim]exit code: {result.returncode}[/dim]")
+                    except subprocess.TimeoutExpired:
+                        state.console.print("[red]Command timed out (60s)[/red]")
+                    except Exception as e:
+                        state.console.print(f"[bold red]Error:[/bold red] {e}")
                 continue
-            except Exception as e:
-                state.console.print(f"[bold red]Error:[/bold red] {e}")
+
+            # --- Slash commands (synchronous — may use questionary) ---
+            if line.startswith("/"):
+                cmd_body = line[1:]
+                parts = cmd_body.split(None, 1)
+                cmd_name = parts[0].lower() if parts else ""
+
+                try:
+                    action = mode_stack.handle_command(cmd_name, parts)
+                except KeyboardInterrupt:
+                    state.console.print("\n[yellow]Interrupted.[/yellow]")
+                    continue
+                except Exception as e:
+                    state.console.print(f"[bold red]Error:[/bold red] {e}")
+                    continue
+
+                if action == "break":
+                    break
+                if action == "continue":
+                    continue
+
+                try:
+                    args = shlex.split(cmd_body)
+                    app(args, standalone_mode=False)
+                except click.exceptions.ClickException as e:
+                    e.show()
+                except (click.exceptions.Abort, click.exceptions.Exit):
+                    pass
+                except SystemExit:
+                    pass
+                except KeyboardInterrupt:
+                    state.console.print("\n[yellow]Interrupted.[/yellow]")
+                except Exception as e:
+                    state.console.print(f"[bold red]Error:[/bold red] {e}")
                 continue
 
-            if action == "break":
-                break
-            if action == "continue":
+            # --- Non-slash input: run LLM call in background thread ---
+            if not _worker_lock.acquire(blocking=False):
+                state.console.print("[dim]Still processing previous request...[/dim]")
                 continue
 
-            # Dispatch to typer commands
-            try:
-                args = shlex.split(cmd_body)
-                app(args, standalone_mode=False)
-            except click.exceptions.ClickException as e:
-                e.show()
-            except (click.exceptions.Abort, click.exceptions.Exit):
-                pass
-            except SystemExit:
-                pass
-            except KeyboardInterrupt:
-                state.console.print("\n[yellow]Interrupted.[/yellow]")
-            except Exception as e:
-                state.console.print(f"[bold red]Error:[/bold red] {e}")
-            continue
+            def _process(text: str) -> None:
+                try:
+                    mode_stack.handle_free_text(text)
+                except KeyboardInterrupt:
+                    state.console.print("\n[yellow]Interrupted.[/yellow]")
+                except Exception as e:
+                    state.console.print(f"[bold red]Error:[/bold red] {e}")
+                finally:
+                    _worker_lock.release()
 
-        # --- Non-slash input ---
-        state.console.print(f"[dim]> {line}[/dim]")
-
-        try:
-            mode_stack.handle_free_text(line)
-        except KeyboardInterrupt:
-            state.console.print("\n[yellow]Interrupted.[/yellow]")
-        except Exception as e:
-            state.console.print(f"[bold red]Error:[/bold red] {e}")
+            threading.Thread(target=_process, args=(line,), daemon=True).start()

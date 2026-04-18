@@ -24,18 +24,16 @@ if TYPE_CHECKING:
     from .modes import ModeStack
 
 
-class SlashCompleter(Completer):
-    """Completer that only activates when input starts with '/'."""
-
-    def __init__(self, commands: list[tuple[str, str]]) -> None:
-        self.commands = commands
+class _DynamicCompleter(Completer):
+    """Completer that queries the mode stack for current commands."""
 
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor.lstrip()
         if not text.startswith("/"):
             return
         prefix = text.lower()
-        for cmd, desc in self.commands:
+        menu = _mode_stack.get_menu() if _mode_stack else []
+        for cmd, desc in menu:
             if cmd.lower().startswith(prefix):
                 yield Completion(
                     cmd,
@@ -100,15 +98,18 @@ _MENU_RESERVE = 14  # lines to reserve below input for completion dropdown
 
 
 def get_input() -> str | None:
-    """Prompt for one line of input with separator lines above and below."""
+    """Prompt for one line of input with mode bar above and separator below.
+
+    The widget stays in scrollback after submission — no erasing. This keeps
+    the mode bar and user input visible as history.
+    """
     # Reserve terminal space below for the completion dropdown
     sys.stdout.write("\n" * _MENU_RESERVE)
     sys.stdout.write(f"\033[{_MENU_RESERVE}A")
     sys.stdout.flush()
 
     sep = "\u2500" * os.get_terminal_size().columns
-    menu = _mode_stack.get_menu() if _mode_stack else []
-    completer = SlashCompleter(menu)
+    completer = _DynamicCompleter()
 
     buf = Buffer(
         history=_history,
@@ -200,6 +201,7 @@ def get_input() -> str | None:
         key_bindings=kb,
         style=_style,
         full_screen=False,
+        erase_when_done=True,
     )
     result = prompt_app.run()
     _trim_history()
@@ -231,9 +233,3 @@ def _trim_history() -> None:
                 f.writelines(line for entry in entries[-_MAX_HISTORY:] for line in entry)
     except OSError:
         pass
-
-
-def erase_lines(n: int) -> None:
-    """Erase the last n lines from the terminal."""
-    sys.stdout.write(f"\033[{n}A\033[J")
-    sys.stdout.flush()
