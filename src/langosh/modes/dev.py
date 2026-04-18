@@ -177,10 +177,10 @@ class DevMode(_GitMixin, Mode):
 
     def path_label(self) -> str:
         server = state.active_server_name
-        return f"dev[{server}]" if server else "dev"
+        return f"graphs[{server}]" if server else "graphs"
 
     def on_enter(self) -> None:
-        state.console.print("[bold cyan]Dev mode.[/bold cyan] Work with local graphs.")
+        state.console.print("[bold cyan]Graphs mode.[/bold cyan] Work with local graphs.")
         state.console.print("[dim]Type /help for commands, /back to return.[/dim]")
 
     @command("list", "List all graphs from the current repo")

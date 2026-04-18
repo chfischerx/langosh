@@ -52,7 +52,11 @@ class Mode:
         items = []
         for cmd_name, (_, desc) in sorted(self._commands.items()):
             items.append((f"/{cmd_name}", desc))
+        # Universal commands available everywhere
         items.extend([
+            ("/model", "Select a LLM model"),
+            ("/models", "List all models with filter"),
+            ("/fetchmodels", "Refresh model list from APIs"),
             ("/help", "Show available commands"),
             ("/back", "Go back to parent mode"),
             ("/home", "Return to main mode"),
@@ -66,6 +70,13 @@ class Mode:
         if cmd_name in self._commands:
             method, _ = self._commands[cmd_name]
             return method(self, parts)
+        # Universal model commands — handled locally or dispatched to typer
+        if cmd_name == "fetchmodels":
+            from ..repl import fetch_models_from_apis
+            fetch_models_from_apis()
+            return "continue"
+        if cmd_name in ("model", "models"):
+            return "dispatch"
         return "dispatch"
 
     def handle_free_text(self, text: str) -> None:

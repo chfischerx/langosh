@@ -1,51 +1,8 @@
-"""LLM mode — chat and code sub-modes."""
+"""Chat and code modes for LLM interaction."""
 
 import langosh.state as state
 
 from . import Mode, command
-
-
-class LlmMode(Mode):
-    """LLM mode — select chat or code, manage models."""
-
-    def path_label(self) -> str:
-        model = state.active_model.get("model_id") or ""
-        if model:
-            # Use short name if available
-            for mlist in state.model_cache.values():
-                for m in mlist:
-                    if m.id == model:
-                        model = m.name
-                        break
-        return f"llm[{model}]" if model else "llm"
-
-    def on_enter(self) -> None:
-        state.console.print("[bold cyan]LLM mode.[/bold cyan]")
-        state.console.print("[dim]Type /help for commands, /back to return.[/dim]")
-
-    @command("chat", "Chat with LLM")
-    def cmd_chat(self, parts):
-        self._stack.push(ChatMode())
-        return "continue"
-
-    @command("code", "LLM with tool use")
-    def cmd_code(self, parts):
-        self._stack.push(CodeMode())
-        return "continue"
-
-    @command("models", "List all models with filter")
-    def cmd_models(self, parts):
-        return "dispatch"
-
-    @command("fetchmodels", "Refresh model list from APIs")
-    def cmd_fetchmodels(self, parts):
-        from ..repl import fetch_models_from_apis
-        fetch_models_from_apis()
-        return "continue"
-
-    @command("use", "Select a LLM model")
-    def cmd_use(self, parts):
-        return "dispatch"
 
 
 class ChatMode(Mode):

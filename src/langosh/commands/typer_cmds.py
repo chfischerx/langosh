@@ -1,4 +1,4 @@
-"""Typer CLI commands (hello, version, models, use, search, ask)."""
+"""Typer CLI commands (version, models, model, search, ask)."""
 
 import typer
 
@@ -25,7 +25,7 @@ def register(app: typer.Typer) -> None:
     def models(
         query: str = typer.Argument(None, help="Provider name or search term to filter models"),
     ) -> None:
-        """List available LLM providers and models. Use '/use <number>' to select."""
+        """List available LLM providers and models. Use '/model <number>' to select."""
         from rich.table import Table
 
         if not state.model_cache:
@@ -76,7 +76,7 @@ def register(app: typer.Typer) -> None:
             state.console.print(f"[dim]Active: {active_prov}:{active_id}[/dim]")
 
     @app.command()
-    def use(
+    def model(
         selection: str = typer.Argument(..., help="Model number from 'models' list, or provider:model_id"),
     ) -> None:
         """Select a model for subsequent LLM calls."""
@@ -103,13 +103,13 @@ def register(app: typer.Typer) -> None:
             state.console.print(f"Active model: [bold]{prov}[/bold] / [cyan]{model_id}[/cyan]")
             return
 
-        state.console.print("[bold red]Usage:[/bold red] /use <number> or /use <provider:model_id>")
+        state.console.print("[bold red]Usage:[/bold red] /model <number> or /model <provider:model_id>")
 
     @app.command()
     def search(
         query: str = typer.Argument(..., help="Search term (fuzzy matched against model ID and name)"),
     ) -> None:
-        """Search for models by name or ID. Use '/use <number>' to select a result."""
+        """Search for models by name or ID. Use '/model <number>' to select a result."""
         from difflib import SequenceMatcher
 
         from rich.table import Table

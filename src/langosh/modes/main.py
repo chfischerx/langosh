@@ -10,8 +10,8 @@ class MainMode(Mode):
         server = state.active_server_name
         return f"main[{server}]" if server else "main"
 
-    @command("dev", "Graph development mode")
-    def cmd_dev(self, parts):
+    @command("graphs", "Graph development mode")
+    def cmd_graphs(self, parts):
         from .dev import DevMode
         self._stack.push(DevMode())
         return "continue"
@@ -30,10 +30,16 @@ class MainMode(Mode):
         self._stack.push(ExecMode(server_name))
         return "continue"
 
-    @command("llm", "LLM chat and code mode")
-    def cmd_llm(self, parts):
-        from .llm import LlmMode
-        self._stack.push(LlmMode())
+    @command("chat", "Chat with LLM")
+    def cmd_chat(self, parts):
+        from .llm import ChatMode
+        self._stack.push(ChatMode())
+        return "continue"
+
+    @command("code", "LLM with tool use")
+    def cmd_code(self, parts):
+        from .llm import CodeMode
+        self._stack.push(CodeMode())
         return "continue"
 
     @command("server", "Server management")
