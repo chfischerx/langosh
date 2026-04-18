@@ -14,6 +14,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout.containers import ConditionalContainer, Float, FloatContainer, HSplit, Window
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.layout import Layout
 from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.layout.processors import BeforeInput
@@ -157,7 +158,36 @@ def _mode_bar() -> str:
     return "\u2500" * left + label + "\u2500" * right
 
 
-_MENU_RESERVE = 14  # lines to reserve below input for completion dropdown
+_MENU_MAX_HEIGHT = 16  # menu rows cap
+
+
+def _scroll_terminal_up(lines: int) -> None:
+    """Force the terminal to scroll up by writing raw bytes to fd 1.
+
+    Bypasses sys.stdout and patch_stdout — goes straight to the terminal
+    so newlines actually scroll instead of being captured as scrollback.
+    """
+    import os
+    try:
+        data = ("\n" * lines + f"\033[{lines}A").encode()
+        os.write(1, data)
+    except OSError:
+        pass
+
+
+def _reserve_terminal_space() -> None:
+    """Scroll the terminal up so the widget + menu fit below the cursor."""
+    menu = _mode_stack.get_menu() if _mode_stack else []
+    widget_rows = 3  # mode bar + input + separator
+    if _processing_message:
+        widget_rows += 1
+    if _sub_mode_name():
+        widget_rows += 1
+    if _ctrlc_active():
+        widget_rows += 1
+    menu_rows = min(len(menu), _MENU_MAX_HEIGHT)
+    reserve = widget_rows + menu_rows + 1
+    _scroll_terminal_up(reserve)
 
 
 def get_input() -> str | None:
@@ -166,10 +196,7 @@ def get_input() -> str | None:
     The widget stays in scrollback after submission — no erasing. This keeps
     the mode bar and user input visible as history.
     """
-    # Reserve terminal space below for the completion dropdown
-    sys.stdout.write("\n" * _MENU_RESERVE)
-    sys.stdout.write(f"\033[{_MENU_RESERVE}A")
-    sys.stdout.flush()
+    _reserve_terminal_space()
 
     sep = "\u2500" * os.get_terminal_size().columns
     completer = _DynamicCompleter()
@@ -197,7 +224,9 @@ def get_input() -> str | None:
                 buffer=buf,
                 input_processors=[BeforeInput("> ", style="class:prompt")],
             ),
-            height=1,
+            wrap_lines=True,
+            dont_extend_height=True,
+            height=Dimension(min=1, max=20),
         ),
         Window(FormattedTextControl(sep), height=1, style="class:separator"),
         ConditionalContainer(
@@ -215,6 +244,12 @@ def get_input() -> str | None:
                 height=1,
             ),
             filter=Condition(_ctrlc_active),
+        ),
+        # Spacer that reserves vertical space for the completion menu float.
+        # Only active when the completion menu is visible.
+        ConditionalContainer(
+            Window(height=Dimension(min=1, preferred=_MENU_MAX_HEIGHT)),
+            filter=Condition(lambda: buf.complete_state is not None),
         ),
     ])
 
