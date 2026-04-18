@@ -74,6 +74,7 @@ async def call_llm_simple(
     api_key: str | None,
     system: str,
     messages: list[dict],
+    on_event: ToolEventCallback | None = None,
 ) -> LLMResult:
     """Single-turn LLM call without tools. Routes to the appropriate provider."""
     provider, model_id, api_key = _resolve(provider, model_id, api_key)
@@ -81,7 +82,7 @@ async def call_llm_simple(
     if provider == "claude_sdk":
         from .claude_sdk import call_claude_sdk_simple
 
-        return await call_claude_sdk_simple(model_id, api_key, system, messages)
+        return await call_claude_sdk_simple(model_id, api_key, system, messages, on_event)
 
     if provider == "anthropic":
         from .anthropic import call_anthropic_simple

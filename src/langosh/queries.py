@@ -19,6 +19,28 @@ def format_elapsed(seconds: float) -> str:
     return f"{seconds:.1f}s"
 
 
+def _format_tool_args(args: dict, max_val_len: int = 120) -> str:
+    """Render tool arguments compactly for log output.
+
+    Single-value args render as just the value.
+    Multi-value args render as key=value pairs.
+    Long values are truncated.
+    """
+    if not args:
+        return ""
+    items = list(args.items())
+
+    def _val(v) -> str:
+        s = str(v).replace("\n", " ")
+        if len(s) > max_val_len:
+            s = s[: max_val_len - 1] + "\u2026"
+        return s
+
+    if len(items) == 1:
+        return _val(items[0][1])
+    return ", ".join(f"{k}={_val(v)}" for k, v in items)
+
+
 def send_query(text: str) -> None:
     """Send text as an LLM prompt using the active model with conversation history."""
     from .config import DEFAULT_MODELS, get_settings
@@ -34,10 +56,24 @@ def send_query(text: str) -> None:
     state.chat_messages.append({"role": "user", "content": text})
     messages_to_send = apply_window("chat", state.chat_messages, provider, model_id)
 
+    from .input import set_processing
+    token_count = {"n": 0}
+    base_msg = f"Calling {model_display_name() or model_id}"
+
     async def _on_event(event_type: str, data: dict) -> None:
         name = data.get("name", "")
-        if event_type == "tool_call":
-            state.console.print(f"[dim]  ↳ calling {name}...[/dim]")
+        if event_type == "token":
+            chunk = data.get("text", "")
+            if chunk:
+                token_count["n"] += len(chunk)
+                set_processing(f"{base_msg} ({token_count['n']} chars)")
+        elif event_type == "status":
+            text = data.get("text", "").strip()
+            if text:
+                state.console.print(f"[dim italic]  • {text}[/dim italic]")
+        elif event_type == "tool_call":
+            args_str = _format_tool_args(data.get("input", {}))
+            state.console.print(f"[dim]  ↳ {name}([/dim][cyan]{args_str}[/cyan][dim])[/dim]")
         elif event_type == "tool_result":
             state.console.print(f"[dim]  ↳ {name} done[/dim]")
 
@@ -112,16 +148,29 @@ def send_code_query(text: str) -> None:
     system_prompt = build_code_system_prompt()
     messages_to_send = apply_window("code", state.code_messages, provider, model_id)
 
+    from .input import set_processing
+    token_count = {"n": 0}
+    base_msg = f"Calling {model_display_name() or model_id}"
+
     async def _on_event(event_type: str, data: dict) -> None:
         name = data.get("name", "")
-        if event_type == "tool_call":
-            state.console.print(f"[dim]  ↳ calling {name}...[/dim]")
+        if event_type == "token":
+            chunk = data.get("text", "")
+            if chunk:
+                token_count["n"] += len(chunk)
+                set_processing(f"{base_msg} ({token_count['n']} chars)")
+        elif event_type == "status":
+            text = data.get("text", "").strip()
+            if text:
+                state.console.print(f"[dim italic]  • {text}[/dim italic]")
+        elif event_type == "tool_call":
+            args_str = _format_tool_args(data.get("input", {}))
+            state.console.print(f"[dim]  ↳ {name}([/dim][cyan]{args_str}[/cyan][dim])[/dim]")
         elif event_type == "tool_result":
-            preview = data.get("result_preview", "")[:100]
+            preview = data.get("result_preview", data.get("preview", ""))[:100]
             state.console.print(f"[dim]  ↳ {name} done ({len(preview)} chars)[/dim]")
 
     start = time.monotonic()
-    state.console.print(f"[dim]Calling {model_display_name() or model_id}...[/dim]")
 
     try:
         result = asyncio.run(

@@ -18,8 +18,14 @@ logger = logging.getLogger(__name__)
 
 try:
     from claude_agent_sdk import (
+        AssistantMessage,
         ClaudeAgentOptions,
         ResultMessage,
+        StreamEvent,
+        TextBlock,
+        ToolResultBlock,
+        ToolUseBlock,
+        UserMessage,
         create_sdk_mcp_server,
         query,
         tool,
@@ -76,14 +82,55 @@ async def _call_sdk(
     mcp_servers: dict | None = None,
     max_turns: int = 1,
     permission_mode: str | None = None,
+    on_event: ToolEventCallback | None = None,
+    emit_tool_events: bool = True,
 ) -> LLMResult:
-    """Call the Claude Agent SDK."""
+    """Call the Claude Agent SDK and stream intermediate updates.
+
+    on_event receives:
+      ("token", {"text": chunk})            — streaming text deltas
+      ("tool_call", {"name", "input"})      — LLM decides to call a tool
+      ("tool_result", {"name", "preview"})  — tool returned
+
+    emit_tool_events=False is used when a custom MCP wrapper already emits
+    tool_call/tool_result events (avoids duplicates in the custom-tools flow).
+    """
     _require_sdk()
+
+    # Capture CLI subprocess stderr and route it through on_event as a
+    # "status" event. The SDK sends text in chunks, so we buffer until
+    # we see a newline and flush complete lines.
+    import re
+    _ansi_re = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+    _buf = {"s": ""}
+
+    def _stderr_cb(text: str) -> None:
+        if on_event is None:
+            return
+        _buf["s"] += text
+        while "\n" in _buf["s"]:
+            line, _buf["s"] = _buf["s"].split("\n", 1)
+            clean = _ansi_re.sub("", line).strip()
+            if not clean:
+                continue
+            # Schedule the async callback from the SDK's thread.
+            import asyncio as _aio
+            try:
+                loop = _aio.get_event_loop()
+                loop.create_task(on_event("status", {"text": clean}))
+            except RuntimeError:
+                # No running loop; ignore
+                pass
 
     kwargs: dict = {
         "model": model,
         "max_turns": max_turns,
         "cwd": os.getcwd(),
+        # Stream token-level deltas so long responses don't look frozen.
+        "include_partial_messages": True,
+        # Intercept CLI stderr so it shows as a dim status line instead of
+        # raw overwriting our spinner.
+        "stderr": _stderr_cb,
     }
     if system_prompt:
         kwargs["system_prompt"] = system_prompt
@@ -108,8 +155,47 @@ async def _call_sdk(
 
     text = ""
     result_info: dict = {}
+    # Track tool_use ids -> names so we can emit tool_result events later.
+    tool_names_by_id: dict[str, str] = {}
 
     async for message in query(prompt=prompt, options=options):
+        if isinstance(message, StreamEvent) and on_event is not None:
+            # Token-level streaming: emit incremental text deltas.
+            ev = message.event or {}
+            if ev.get("type") == "content_block_delta":
+                delta = ev.get("delta", {}) or {}
+                if delta.get("type") == "text_delta":
+                    chunk = delta.get("text", "")
+                    if chunk:
+                        await on_event("token", {"text": chunk})
+            continue
+
+        if isinstance(message, AssistantMessage):
+            for block in message.content or []:
+                if isinstance(block, ToolUseBlock):
+                    tool_names_by_id[block.id] = block.name
+                    if emit_tool_events and on_event is not None:
+                        await on_event("tool_call", {"name": block.name, "input": block.input})
+            continue
+
+        if isinstance(message, UserMessage):
+            # UserMessage here typically carries tool_result blocks.
+            if not emit_tool_events or on_event is None:
+                continue
+            content = message.content if isinstance(message.content, list) else []
+            for block in content:
+                if isinstance(block, ToolResultBlock):
+                    preview = ""
+                    if isinstance(block.content, str):
+                        preview = block.content
+                    elif isinstance(block.content, list):
+                        for c in block.content:
+                            if isinstance(c, dict) and c.get("type") == "text":
+                                preview += c.get("text", "")
+                    name = tool_names_by_id.get(block.tool_use_id, "")
+                    await on_event("tool_result", {"name": name, "preview": preview[:300]})
+            continue
+
         if isinstance(message, ResultMessage):
             text = message.result or ""
             result_info = {
@@ -137,6 +223,7 @@ async def call_claude_sdk_simple(
     api_key: str,
     system: str,
     messages: list[dict],
+    on_event: ToolEventCallback | None = None,
 ) -> LLMResult:
     """Chat mode: single turn, no tools."""
     prompt = _messages_to_prompt(messages)
@@ -146,6 +233,7 @@ async def call_claude_sdk_simple(
         system_prompt=system,
         allowed_tools=[],
         max_turns=1,
+        on_event=on_event,
     )
 
 
@@ -217,6 +305,7 @@ async def call_claude_sdk_with_tools(
             allowed_tools=_CODE_TOOLS,
             max_turns=max_tool_turns or 20,
             permission_mode=_PERMISSION_MAP.get(sub_mode, "acceptEdits"),
+            on_event=on_event,
         )
 
     tool_calls_log: list[dict] = []
@@ -234,6 +323,10 @@ async def call_claude_sdk_with_tools(
         # bypassPermissions: tool_dispatcher (via make_guarded_dispatcher)
         # runs our own approval widget; we don't want the SDK adding another.
         permission_mode="bypassPermissions",
+        on_event=on_event,
+        # Tool events already emitted by the MCP wrapper — don't duplicate
+        # from the message-iteration path.
+        emit_tool_events=False,
     )
     result["tool_calls"] = tool_calls_log
     return result
