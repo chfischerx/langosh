@@ -54,6 +54,10 @@ _style = PtStyle.from_dict({
     "spinner": "fg:ansicyan",
     "status": "fg:ansidarkgray",
     "ctrlc-hint": "fg:ansiyellow",
+    "submode-plan": "fg:ansiyellow",
+    "submode-auto": "fg:ansicyan",
+    "submode-edit": "fg:ansimagenta",
+    "submode-hint": "fg:ansidarkgray",
     "completion-menu": "bg:#1a1a2e fg:#8888aa",
     "completion-menu.completion.current": "bg:#e2e2e2 fg:#000000 bold",
     "completion-menu.meta.completion": "bg:#1a1a2e fg:#555577",
@@ -108,6 +112,34 @@ def _status_line() -> list[tuple[str, str]]:
         return [("", "")]
     frame = _SPINNER_FRAMES[int(_time.monotonic() * 10) % len(_SPINNER_FRAMES)]
     return [("class:spinner", f"{frame} "), ("class:status", _processing_message)]
+
+
+def _sub_mode_name() -> str | None:
+    """Return the current mode's sub-mode name, if any."""
+    if _mode_stack is None:
+        return None
+    return _mode_stack.current.get_sub_mode()
+
+
+_SUB_MODE_ICONS = {
+    "plan": "\u23f8",      # ⏸
+    "auto": "\u25b6\u25b6",  # ▶▶
+    "edit": "\u25b6\u25b6",  # ▶▶
+}
+
+
+def _sub_mode_line() -> list[tuple[str, str]]:
+    """Format the sub-mode indicator line (shown only when mode has a sub-mode)."""
+    name = _sub_mode_name()
+    if not name:
+        return [("", "")]
+    icon = _SUB_MODE_ICONS.get(name, "\u25b6\u25b6")
+    color_class = f"class:submode-{name}"
+    return [
+        (color_class, f"  {icon} "),
+        (color_class, f"{name} mode on "),
+        ("class:submode-hint", "(shift+tab to cycle)"),
+    ]
 
 
 def _mode_bar() -> str:
@@ -170,6 +202,13 @@ def get_input() -> str | None:
         Window(FormattedTextControl(sep), height=1, style="class:separator"),
         ConditionalContainer(
             Window(
+                FormattedTextControl(_sub_mode_line),
+                height=1,
+            ),
+            filter=Condition(lambda: _sub_mode_name() is not None),
+        ),
+        ConditionalContainer(
+            Window(
                 FormattedTextControl(
                     lambda: [("class:ctrlc-hint", "Press Ctrl-C again to exit")]
                 ),
@@ -223,6 +262,10 @@ def get_input() -> str | None:
     def _shift_tab(event):
         if _has_menu(buf):
             buf.complete_previous()
+            return
+        # No completion menu — cycle the mode's sub-mode (if any)
+        if _mode_stack is not None:
+            _mode_stack.current.cycle_sub_mode()
 
     @kb.add("enter")
     def _accept(event):

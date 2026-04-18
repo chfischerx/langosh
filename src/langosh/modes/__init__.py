@@ -65,6 +65,14 @@ class Mode:
         ])
         return items
 
+    def get_sub_mode(self) -> str | None:
+        """Return the current approval sub-mode name, or None if not applicable."""
+        return None
+
+    def cycle_sub_mode(self) -> str | None:
+        """Cycle to the next sub-mode. Return the new name, or None if not applicable."""
+        return None
+
     def handle_command(self, cmd_name: str, parts: list[str]) -> str:
         """Dispatch a slash command. Returns 'continue', 'break', or 'dispatch'."""
         if cmd_name in self._commands:

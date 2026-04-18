@@ -53,6 +53,19 @@ class CodeMode(Mode):
     def path_label(self) -> str:
         return f"code:{state.code_sub_mode}"
 
+    def get_sub_mode(self) -> str | None:
+        return state.code_sub_mode
+
+    def cycle_sub_mode(self) -> str | None:
+        modes = ["plan", "auto", "edit"]
+        try:
+            idx = modes.index(state.code_sub_mode)
+        except ValueError:
+            idx = -1
+        new = modes[(idx + 1) % len(modes)]
+        _set_code_sub_mode(new)
+        return new
+
     def on_enter(self) -> None:
         turns = len([m for m in state.code_messages if m["role"] == "user"])
         if turns:
@@ -114,12 +127,6 @@ def _set_code_sub_mode(mode: str) -> str:
     from ..settings import set as set_setting
     state.code_sub_mode = mode
     set_setting("code_sub_mode", mode)
-    labels = {
-        "plan": "Read-only: reads auto, writes denied",
-        "auto": "Reads auto, writes require approval",
-        "edit": "Auto-approve everything",
-    }
-    state.console.print(f"[bold cyan]{mode}[/bold cyan] [dim]-- {labels[mode]}[/dim]")
     return "continue"
 
 
