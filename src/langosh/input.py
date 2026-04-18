@@ -53,6 +53,7 @@ _style = PtStyle.from_dict({
     "prompt": "bold fg:ansibrightcyan",
     "spinner": "fg:ansicyan",
     "status": "fg:ansidarkgray",
+    "ctrlc-hint": "fg:ansiyellow",
     "completion-menu": "bg:#1a1a2e fg:#8888aa",
     "completion-menu.completion.current": "bg:#e2e2e2 fg:#000000 bold",
     "completion-menu.meta.completion": "bg:#1a1a2e fg:#555577",
@@ -84,12 +85,20 @@ def set_mode_stack(stack: ModeStack) -> None:
 
 _SPINNER_FRAMES = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"
 _processing_message: str | None = None
+_last_ctrlc: float = 0.0  # timestamp of last Ctrl+C press
+_CTRLC_WINDOW = 1.0  # seconds
 
 
 def set_processing(message: str | None) -> None:
     """Show/hide a spinner line above the mode bar. Thread-safe."""
     global _processing_message
     _processing_message = message
+
+
+def _ctrlc_active() -> bool:
+    """True if a Ctrl+C was pressed within the confirmation window."""
+    import time as _time
+    return _last_ctrlc > 0 and _time.monotonic() - _last_ctrlc < _CTRLC_WINDOW
 
 
 def _status_line() -> list[tuple[str, str]]:
@@ -159,6 +168,15 @@ def get_input() -> str | None:
             height=1,
         ),
         Window(FormattedTextControl(sep), height=1, style="class:separator"),
+        ConditionalContainer(
+            Window(
+                FormattedTextControl(
+                    lambda: [("class:ctrlc-hint", "Press Ctrl-C again to exit")]
+                ),
+                height=1,
+            ),
+            filter=Condition(_ctrlc_active),
+        ),
     ])
 
     layout = Layout(
@@ -221,8 +239,18 @@ def get_input() -> str | None:
             buf.complete_state = None
 
     @kb.add("c-c")
+    def _ctrl_c(event):
+        global _last_ctrlc
+        import time as _time
+        now = _time.monotonic()
+        if _ctrlc_active():
+            event.app.exit(result=None)
+        else:
+            _last_ctrlc = now
+            event.app.invalidate()
+
     @kb.add("c-d")
-    def _cancel(event):
+    def _ctrl_d(event):
         event.app.exit(result=None)
 
     prompt_app = Application(
