@@ -75,11 +75,9 @@ def send_query(text: str) -> None:
     })
 
     print_renderables(state.console, render_semantic(result["text"]))
-    turns = len([m for m in state.chat_messages if m["role"] == "user"])
     state.console.print(
         f"\n[dim]{format_elapsed(elapsed)} | "
-        f"{result['input_tokens']} ↑ / {result['output_tokens']} ↓ | "
-        f"turn {turns}[/dim]"
+        f"{result['input_tokens']} ↑ / {result['output_tokens']} ↓[/dim]"
     )
 
 
@@ -162,9 +160,7 @@ def send_code_query(text: str) -> None:
     tool_info = f" | {len(tool_calls)} tool calls" if tool_calls else ""
     cost = result.get("cost_usd")
     cost_info = f" | ${cost:.4f}" if cost else ""
-    turns = len([m for m in state.code_messages if m["role"] == "user"])
     state.console.print(
         f"\n[dim]{format_elapsed(elapsed)} | "
-        f"{result['input_tokens']} ↑ / {result['output_tokens']} ↓{tool_info}{cost_info} | "
-        f"turn {turns}[/dim]"
+        f"{result['input_tokens']} ↑ / {result['output_tokens']} ↓{tool_info}{cost_info}[/dim]"
     )

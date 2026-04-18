@@ -238,14 +238,15 @@ class SelectedServerMode(_ServerCommandsMixin, Mode):
 
     @command("reload", "Hot-reload agent repo (langosh server only)")
     def cmd_reload(self, parts):
-        from ..agents import server_client
         from ..settings import is_langosh_server
+        from ..worker import run_in_background
 
         if not is_langosh_server():
             state.console.print("[dim]Not a langosh server -- reload not available.[/dim]")
             return "continue"
 
-        try:
+        def _work():
+            from ..agents import server_client
             result = asyncio.run(server_client.reload_agents())
             state.console.print("[green]Agents reloaded on server.[/green]")
             if isinstance(result, dict):
@@ -262,8 +263,8 @@ class SelectedServerMode(_ServerCommandsMixin, Mode):
                 graphs = result.get("graphs", [])
                 if graphs:
                     state.console.print(f"  [dim]Graphs: {', '.join(graphs)}[/dim]")
-        except Exception as e:
-            state.console.print(f"[bold red]Error:[/bold red] {e}")
+
+        run_in_background("Reloading server...", _work)
         return "continue"
 
     @command("config", "Show and edit server config")

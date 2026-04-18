@@ -83,16 +83,15 @@ def create_agent(
 
     state.console.print(f"[dim]Building graph '{name}' ({graph_id})...[/dim]")
 
-    with state.console.status(f"[dim]Generating definition with {model_display_name() or model_id}...[/dim]"):
-        result = asyncio.run(
-            call_llm_simple(
-                provider=provider,
-                model_id=model_id,
-                api_key=None,
-                system=builder_system_prompt(),
-                messages=[{"role": "user", "content": user_prompt}],
-            )
+    result = asyncio.run(
+        call_llm_simple(
+            provider=provider,
+            model_id=model_id,
+            api_key=None,
+            system=builder_system_prompt(),
+            messages=[{"role": "user", "content": user_prompt}],
         )
+    )
 
     definition = _extract_json_block(result["text"])
     if not definition:

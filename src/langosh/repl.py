@@ -4,16 +4,16 @@ import asyncio
 import shlex
 import subprocess
 import sys
-import threading
 
 import click.exceptions
 from prompt_toolkit.patch_stdout import patch_stdout
 
 import langosh.state as state
 
-from .input import get_input, model_display_name, set_mode_stack, set_processing
+from .input import get_input, model_display_name, set_mode_stack
 from .modes import ModeStack
 from .modes.main import MainMode
+from .worker import run_in_background
 
 
 import json
@@ -75,8 +75,8 @@ def fetch_models_from_apis() -> None:
     """Fetch models from provider APIs, update cache and save to disk."""
     from .llm.model_catalog import fetch_models
 
-    with state.console.status("[dim]Fetching models from provider APIs...[/dim]"):
-        state.model_cache = asyncio.run(fetch_models())
+    state.console.print("[dim]Fetching models from provider APIs...[/dim]")
+    state.model_cache = asyncio.run(fetch_models())
 
     _rebuild_model_list()
     _save_models_cache()
@@ -135,8 +135,6 @@ def repl(app) -> None:
     # Re-point Rich Console to sys.stdout so patch_stdout can intercept it
     from rich.console import Console
     from rich.theme import Theme
-
-    _worker_lock = threading.Lock()
 
     with patch_stdout(raw=True):
         state.console = Console(theme=Theme({"dim": "grey70"}), file=sys.stdout)
@@ -209,21 +207,9 @@ def repl(app) -> None:
                 continue
 
             # --- Non-slash input: run LLM call in background thread ---
-            if not _worker_lock.acquire(blocking=False):
-                state.console.print("[dim]Still processing previous request...[/dim]")
-                continue
-
-            def _process(text: str) -> None:
-                model_name = model_display_name() or "LLM"
-                set_processing(f"Calling {model_name}...")
-                try:
-                    mode_stack.handle_free_text(text)
-                except KeyboardInterrupt:
-                    state.console.print("\n[yellow]Interrupted.[/yellow]")
-                except Exception as e:
-                    state.console.print(f"[bold red]Error:[/bold red] {e}")
-                finally:
-                    set_processing(None)
-                    _worker_lock.release()
-
-            threading.Thread(target=_process, args=(line,), daemon=True).start()
+            model_name = model_display_name() or "LLM"
+            run_in_background(
+                f"Calling {model_name}...",
+                mode_stack.handle_free_text,
+                line,
+            )

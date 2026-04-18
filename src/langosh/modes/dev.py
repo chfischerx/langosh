@@ -274,14 +274,15 @@ class DevMode(_GitMixin, Mode):
                 return "continue"
             graph_model = graph_model.strip()
 
-        state.console.print()
-        try:
+        from ..worker import run_in_background
+
+        def _work():
             summary = create_agent(
                 name.strip(), description.strip(), instructions.strip(), graph_model=graph_model,
             )
             state.console.print(f"\n[green]{summary}[/green]")
-        except Exception as e:
-            state.console.print(f"[bold red]Error creating agent:[/bold red] {e}")
+
+        run_in_background("Generating graph definition...", _work)
         return "continue"
 
     @command("select", "Select an existing graph to work with")

@@ -120,8 +120,8 @@ class _ThreadCommandsMixin:
         return "continue"
 
 
-def _deploy() -> str:
-    """Shared deploy: commit, push, and reload agents on the server."""
+def _deploy_work() -> None:
+    """Perform git commit+push and server reload. Runs in worker thread."""
     import subprocess
     from datetime import datetime
     from ..agents import server_client
@@ -146,7 +146,7 @@ def _deploy() -> str:
             )
         else:
             state.console.print(f"[red]Commit failed:[/red] [dim]{result.stderr.strip()}[/dim]")
-            return "continue"
+            return
     else:
         state.console.print("[dim]No uncommitted changes.[/dim]")
 
@@ -184,7 +184,63 @@ def _deploy() -> str:
             state.console.print(f"[yellow]Reload failed:[/yellow] [dim]{e}[/dim]")
     else:
         state.console.print("[dim]Skipping reload (not a langosh server).[/dim]")
+
+
+def _deploy() -> str:
+    """Dispatch deploy to background worker."""
+    from ..worker import run_in_background
+    run_in_background("Deploying...", _deploy_work)
     return "continue"
+
+
+async def _default_on_event(event_type, data):
+    """Default event handler for streaming runs — prints tokens, tool calls, errors."""
+    if event_type == "token":
+        state.console.print(data.get("text", ""), end="", soft_wrap=True, highlight=False)
+    elif event_type == "tool_call":
+        state.console.print(f"\n[dim]  \u21b3 calling {data.get('name', '?')}...[/dim]")
+    elif event_type == "tool_result":
+        preview = data.get("preview", "")[:80]
+        state.console.print(f"[dim]  \u21b3 done ({preview})[/dim]")
+    elif event_type == "error":
+        state.console.print(f"\n[bold red]Error:[/bold red] {data.get('message', '')}")
+
+
+def _execute_run(exec_mode: str, assistant_id: str, thread_id: str | None,
+                 messages: list[dict]) -> None:
+    """Execute the run in the chosen mode. Called from a worker thread."""
+    from ..agents import server_client
+
+    if exec_mode == "Stream output":
+        result = asyncio.run(
+            server_client.stream_run(
+                assistant_id=assistant_id, thread_id=thread_id,
+                messages=messages, on_event=_default_on_event,
+            )
+        )
+        rid = result.get("run_id", "?")[:8]
+        state.console.print(f"\n[dim]run {rid}[/dim]")
+
+    elif exec_mode == "Wait for output":
+        result = asyncio.run(
+            server_client.wait_run(
+                assistant_id=assistant_id, thread_id=thread_id,
+                messages=messages,
+            )
+        )
+        text = result.get("text", "")
+        state.console.print(f"\n{text}")
+
+    elif exec_mode == "Background":
+        result = asyncio.run(
+            server_client.background_run(
+                assistant_id=assistant_id, thread_id=thread_id,
+                messages=messages,
+            )
+        )
+        run_id = result.get("run_id", "?")[:8]
+        run_status = result.get("status", "?")
+        state.console.print(f"[green]Run submitted.[/green] [dim]run {run_id} ({run_status})[/dim]")
 
 
 def _stateless_test(graph_id: str, parts: list[str]) -> str:
@@ -218,64 +274,13 @@ def _stateless_test(graph_id: str, parts: list[str]) -> str:
 
     messages = [{"role": "user", "content": msg}]
 
-    if exec_mode == "Stream output":
-        async def _on_event(event_type, data):
-            if event_type == "token":
-                state.console.print(data.get("text", ""), end="", soft_wrap=True, highlight=False)
-            elif event_type == "tool_call":
-                state.console.print(f"\n[dim]  \u21b3 calling {data.get('name', '?')}...[/dim]")
-            elif event_type == "tool_result":
-                preview = data.get("preview", "")[:80]
-                state.console.print(f"[dim]  \u21b3 done ({preview})[/dim]")
-            elif event_type == "error":
-                state.console.print(f"\n[bold red]Error:[/bold red] {data.get('message', '')}")
-
-        state.console.print(f"\n[dim]Stateless streaming run...[/dim]\n")
-        try:
-            asyncio.run(
-                server_client.stream_run(
-                    assistant_id=aid, thread_id=None,
-                    messages=messages, on_event=_on_event,
-                )
-            )
-        except KeyboardInterrupt:
-            state.console.print("\n[yellow]Interrupted.[/yellow]")
-        except Exception as e:
-            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
-
-    elif exec_mode == "Wait for output":
-        state.console.print(f"\n[dim]Stateless run (wait)...[/dim]")
-        try:
-            with state.console.status("[dim]Waiting for response...[/dim]"):
-                result = asyncio.run(
-                    server_client.wait_run(
-                        assistant_id=aid, thread_id=None,
-                        messages=messages,
-                    )
-                )
-            text = result.get("text", "")
-            state.console.print(f"\n{text}")
-        except KeyboardInterrupt:
-            state.console.print("\n[yellow]Interrupted.[/yellow]")
-        except Exception as e:
-            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
-
-    elif exec_mode == "Background":
-        state.console.print(f"\n[dim]Submitting background run (stateless)...[/dim]")
-        try:
-            result = asyncio.run(
-                server_client.background_run(
-                    assistant_id=aid, thread_id=None,
-                    messages=messages,
-                )
-            )
-            run_id = result.get("run_id", "?")[:8]
-            run_status = result.get("status", "?")
-            state.console.print(f"[green]Run submitted.[/green] [dim]run {run_id} ({run_status})[/dim]")
-        except Exception as e:
-            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
-
-    state.console.print()
+    from ..worker import run_in_background
+    from ..input import model_display_name
+    model = model_display_name() or "assistant"
+    spinner_msg = f"Streaming {model}..." if exec_mode == "Stream output" else (
+        f"Waiting for {model}..." if exec_mode == "Wait for output" else f"Submitting to {model}..."
+    )
+    run_in_background(spinner_msg, _execute_run, exec_mode, aid, None, messages)
     return "continue"
 
 
@@ -361,65 +366,14 @@ def _run_interactive(mode, parts, assistant_id: str, graph_id: str, *, metadata_
 
     messages = [{"role": "user", "content": msg}]
 
-    # 4. Execute based on mode
-    if exec_mode == "Stream output":
-        async def _on_event(event_type, data):
-            if event_type == "token":
-                state.console.print(data.get("text", ""), end="", soft_wrap=True, highlight=False)
-            elif event_type == "tool_call":
-                state.console.print(f"\n[dim]  \u21b3 calling {data.get('name', '?')}...[/dim]")
-            elif event_type == "tool_result":
-                preview = data.get("preview", "")[:80]
-                state.console.print(f"[dim]  \u21b3 done ({preview})[/dim]")
-            elif event_type == "error":
-                state.console.print(f"\n[bold red]Error:[/bold red] {data.get('message', '')}")
-
-        state.console.print(f"\n[dim]Streaming run (thread {tid[:8]})...[/dim]\n")
-        try:
-            result = asyncio.run(
-                server_client.stream_run(
-                    assistant_id=assistant_id, thread_id=tid,
-                    messages=messages, on_event=_on_event,
-                )
-            )
-            state.console.print(f"\n[dim]run {result.get('run_id', '?')[:8]}[/dim]")
-        except KeyboardInterrupt:
-            state.console.print("\n[yellow]Interrupted.[/yellow]")
-        except Exception as e:
-            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
-
-    elif exec_mode == "Wait for output":
-        state.console.print(f"\n[dim]Running (wait) on thread {tid[:8]}...[/dim]")
-        try:
-            with state.console.status("[dim]Waiting for response...[/dim]"):
-                result = asyncio.run(
-                    server_client.wait_run(
-                        assistant_id=assistant_id, thread_id=tid,
-                        messages=messages,
-                    )
-                )
-            text = result.get("text", "")
-            state.console.print(f"\n{text}")
-        except KeyboardInterrupt:
-            state.console.print("\n[yellow]Interrupted.[/yellow]")
-        except Exception as e:
-            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
-
-    elif exec_mode == "Background":
-        state.console.print(f"\n[dim]Submitting background run (thread {tid[:8]})...[/dim]")
-        try:
-            result = asyncio.run(
-                server_client.background_run(
-                    assistant_id=assistant_id, thread_id=tid,
-                    messages=messages,
-                )
-            )
-            run_id = result.get("run_id", "?")[:8]
-            status = result.get("status", "?")
-            state.console.print(f"[green]Run submitted.[/green] [dim]run {run_id} ({status})[/dim]")
-        except Exception as e:
-            state.console.print(f"\n[bold red]Error:[/bold red] {e}")
-
+    # 4. Dispatch execution to background worker (keeps prompt widget responsive)
+    from ..worker import run_in_background
+    from ..input import model_display_name
+    model = model_display_name() or "assistant"
+    spinner_msg = f"Streaming {model}..." if exec_mode == "Stream output" else (
+        f"Waiting for {model}..." if exec_mode == "Wait for output" else f"Submitting to {model}..."
+    )
+    run_in_background(spinner_msg, _execute_run, exec_mode, assistant_id, tid, messages)
     return "continue"
 
 
