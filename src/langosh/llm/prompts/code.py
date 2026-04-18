@@ -44,6 +44,18 @@ LangGraph/LangSmith docs. Use FIRST for any non-trivial API question.
 tree/find/grep/rg) over the docs filesystem. Use to fetch full <code>.mdx</code> \
 content or explore structure.
 
+Subagents:
+- <code>spawn_subagent(role, task)</code> delegates a focused sub-task to a \
+fresh agent with a restricted toolset. Use it when:
+  - You need deep doc research that would dump a lot of content into this \
+conversation → role=<code>researcher</code>.
+  - You need to summarize what a part of the codebase does without editing \
+→ role=<code>explorer</code>.
+  - A discrete implementation step can be handled in isolation (read + \
+write in one scope) → role=<code>coder</code>.
+- Give the subagent a self-contained task description — it cannot see our \
+conversation.
+
 Work methodology:
 - Before making non-trivial LangChain/LangGraph changes, consult the docs \
 via <code>docs_search</code> and <code>docs_read</code> to confirm current \

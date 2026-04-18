@@ -20,14 +20,20 @@ from .git_tools import DISPATCH as _GIT_DISPATCH
 from .git_tools import TOOLS as _GIT_TOOLS
 from .python_exec import DISPATCH as _PYTHON_DISPATCH
 from .python_exec import TOOLS as _PYTHON_TOOLS
+from .subagent_tools import DISPATCH as _SUBAGENT_DISPATCH
+from .subagent_tools import TOOLS as _SUBAGENT_TOOLS
 
-ALL_TOOLS: list[dict] = _FILE_TOOLS + _GIT_TOOLS + _PYTHON_TOOLS + DOCS_TOOLS
+ALL_TOOLS: list[dict] = _FILE_TOOLS + _GIT_TOOLS + _PYTHON_TOOLS + DOCS_TOOLS + _SUBAGENT_TOOLS
 
-_DISPATCH: dict = {**_FILE_DISPATCH, **_GIT_DISPATCH, **_PYTHON_DISPATCH, **_DOCS_DISPATCH}
+_DISPATCH: dict = {
+    **_FILE_DISPATCH, **_GIT_DISPATCH, **_PYTHON_DISPATCH,
+    **_DOCS_DISPATCH, **_SUBAGENT_DISPATCH,
+}
 
 READ_TOOLS = {"read_file", "list_directory", "glob_files", "grep_files",
               "git_status", "git_diff", "git_log", "git_show", "git_blame",
-              "docs_search", "docs_read"}
+              "docs_search", "docs_read",
+              "spawn_subagent"}
 WRITE_TOOLS = {"write_file", "edit_file", "execute_python"}
 
 _APPROVAL_STYLE = PtStyle.from_dict({

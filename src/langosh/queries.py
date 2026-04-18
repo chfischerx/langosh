@@ -57,6 +57,7 @@ def send_query(text: str) -> None:
     messages_to_send = apply_window("chat", state.chat_messages, provider, model_id)
 
     from .input import set_processing
+    from .llm.tools.subagent_tools import set_parent_on_event
     token_count = {"n": 0}
     base_msg = f"Calling {model_display_name() or model_id}"
 
@@ -76,6 +77,8 @@ def send_query(text: str) -> None:
             state.console.print(f"[dim]  ↳ {name}([/dim][cyan]{args_str}[/cyan][dim])[/dim]")
         elif event_type == "tool_result":
             state.console.print(f"[dim]  ↳ {name} done[/dim]")
+
+    set_parent_on_event(_on_event)
 
     start = time.monotonic()
     try:
@@ -149,6 +152,7 @@ def send_code_query(text: str) -> None:
     messages_to_send = apply_window("code", state.code_messages, provider, model_id)
 
     from .input import set_processing
+    from .llm.tools.subagent_tools import set_parent_on_event
     token_count = {"n": 0}
     base_msg = f"Calling {model_display_name() or model_id}"
 
@@ -169,6 +173,8 @@ def send_code_query(text: str) -> None:
         elif event_type == "tool_result":
             preview = data.get("result_preview", data.get("preview", ""))[:100]
             state.console.print(f"[dim]  ↳ {name} done ({len(preview)} chars)[/dim]")
+
+    set_parent_on_event(_on_event)
 
     start = time.monotonic()
 

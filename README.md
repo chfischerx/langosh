@@ -1,12 +1,13 @@
 # langosh
 
-A CLI to create, test, and deploy LangGraph agents.
+A CLI to build, test, and deploy LangGraph agents — with live streaming,
+LangChain docs lookup, and subagent delegation baked in.
 
 ## Requirements
 
 - Python 3.11+
-- A running [langosh-server](../langosh-server) instance
-- The [langosh-agents](../langosh-agents) repo (sibling directory)
+- A running [langosh-server](../langosh-server) instance (optional — only needed for exec mode)
+- The [langosh-agents](../langosh-agents) repo (sibling directory, optional — only needed for dev mode)
 
 ## Installation
 
@@ -37,20 +38,27 @@ The CLI uses a hierarchical mode system. Each mode has its own commands.
 
 The mode bar at the top shows the current path (e.g. `exec[local]:my-graph:assistant-1`).
 
+### Input controls
+
+- **Shift+Tab** — cycle the current sub-mode (`plan` → `auto` → `edit`) where applicable
+- **Ctrl+C** (twice within 1 second) — exit
+- **Up/Down** — history / completion-menu navigation
+- **Tab** — complete commands
+- **Escape** — dismiss completion menu
+
 ## Mode tree
 
 ```
 main
-├── dev                      Local graph development
-│   └── [graph_id]:[mode]    LLM-driven editing (normal/plan/auto)
+├── graphs                   Local graph development (requires langgraph repo)
+│   └── [graph_id]:[mode]    LLM-driven editing (plan/auto/edit)
 ├── exec[server]             Execute graphs on a server
-│   └── [graph_id]           Graph commands
-│       └── [assistant]      Assistant commands
+│   └── [graph_id]           Graph-scoped commands
+│       └── [assistant]      Assistant-scoped commands
 │           └── [thread]     Thread inspection
 │               └── [run]    Run inspection
-├── llm                      LLM interaction
-│   ├── chat                 Direct conversation
-│   └── code                 LLM with tool use
+├── chat                     Direct LLM conversation (LangChain docs Q&A)
+├── code:[mode]              LLM with tool use (plan/auto/edit)
 ├── server                   Server management
 │   └── [server_name]        Selected server
 │       ├── config           Server configuration
@@ -58,20 +66,36 @@ main
 └── settings                 CLI settings
 ```
 
+## Universal commands
+
+Available in every mode:
+
+| Command | Description |
+|---------|-------------|
+| `/model` | Select an LLM model |
+| `/models` | List all models with optional filter |
+| `/fetchmodels` | Refresh model list from APIs |
+| `/help` | Show available commands |
+| `/back` | Go back to parent mode |
+| `/home` | Return to main mode |
+| `/cls` | Clear screen |
+| `/exit` | Quit |
+
 ## Commands
 
 ### Main (`main`)
 
 | Command | Description |
 |---------|-------------|
-| `/dev` | Graph development mode |
-| `/exec` | Execute graphs and assistants |
-| `/llm` | LLM chat and code mode |
+| `/graphs` | Local graph development |
+| `/exec` | Execute graphs and assistants on a server |
+| `/chat` | LLM chat (LangChain docs-backed) |
+| `/code` | LLM with tool use |
 | `/server` | Server management |
 | `/settings` | CLI settings |
 | `/version` | Show the application version |
 
-### Dev (`dev`)
+### Graphs (`graphs`)
 
 Requires the CLI to be started within a langgraph code repository.
 
@@ -79,22 +103,25 @@ Requires the CLI to be started within a langgraph code repository.
 |---------|-------------|
 | `/list` | List all graphs from the current repo |
 | `/select` | Select an existing graph to work with |
-| `/create` | Create a new graph with LLM guidance |
+| `/create` | Create a new graph (LLM-generated) |
+| `/deploy` | Commit, push, and reload agents on the server |
 | `/status` | Show git status |
 | `/commit` | Commit all changes |
 
-### Dev > Graph (`dev:[graph_id]:[mode]`)
+### Graphs > Graph (`graphs:[graph_id]:[mode]`)
 
-LLM-driven editing. Free text is sent as edit instructions.
+LLM-driven editing. Free text is sent as an edit instruction.
 
 | Command | Description |
 |---------|-------------|
-| `/normal` | Confirm every destructive operation |
-| `/plan` | Read-only tools, no edits |
-| `/auto` | Auto-approve all tool calls |
-| `/compile` | Compile the selected graph |
+| `/plan` | Read-only: reads auto, writes denied |
+| `/auto` | Reads auto, writes require approval |
+| `/edit` | Auto-approve everything |
+| `/compile` | Compile the selected graph (definition.json → Python) |
 | `/delete` | Delete the selected graph |
-| `/preview` | Visualize the selected graph |
+| `/preview` | Visualize the graph as ASCII (via grandalf) |
+| `/test` | Stateless test run against the server |
+| `/deploy` | Commit, push, and reload agents on the server |
 | `/status` | Show git status |
 | `/commit` | Commit all changes |
 
@@ -116,7 +143,7 @@ Requires a selected server.
 | `/thread` | Select a thread |
 | `/create` | Create a new assistant with custom context |
 | `/search` | Search for assistants |
-| `/show` | Display the graph (ASCII diagram from server) |
+| `/show` | Display the graph (ASCII from server) |
 | `/test` | Stateless run (no thread history) |
 | `/run` | Create a stateful run (interactive: mode, thread, message) |
 | `/threads` | List all threads (filtered by graph) |
@@ -132,17 +159,17 @@ Requires a selected server.
 | `/update` | Update assistant context |
 | `/delete` | Delete the assistant |
 | `/test` | Stateless run |
-| `/run` | Create a stateful run (interactive: mode, thread, message) |
+| `/run` | Create a stateful run |
 | `/threads` | List all threads (filtered by graph + assistant) |
 | `/delthread` | Delete a thread |
 | `/delallthreads` | Delete all threads (filtered by graph + assistant) |
 
-#### /run flow
+#### /run and /test flow
 
-The `/run` command prompts interactively:
+Both commands prompt interactively:
 
 1. **Execution mode**: Stream output, Wait for output, or Background
-2. **Create new thread?**: yes/no
+2. **Create new thread?** (run only): yes/no
 3. If yes — optional thread name
 4. If no — select from existing threads
 5. **Message**: the input to send
@@ -170,19 +197,10 @@ metadata. Thread listings are filtered by the current scope.
 | `/delete` | Delete this run |
 | `/cancel` | Cancel this run |
 
-### LLM (`llm`)
+### Chat (`chat`)
 
-| Command | Description |
-|---------|-------------|
-| `/chat` | Chat with LLM |
-| `/code` | LLM with tool use |
-| `/models` | List all models with filter |
-| `/fetchmodels` | Refresh model list from APIs |
-| `/use` | Select a LLM model |
-
-### LLM > Chat (`llm:chat`)
-
-Free text is sent as an LLM prompt.
+Free text is sent as an LLM prompt. The chat is framed as a LangChain /
+LangGraph / LangSmith expert and has access to the live docs via MCP.
 
 | Command | Description |
 |---------|-------------|
@@ -190,18 +208,28 @@ Free text is sent as an LLM prompt.
 | `/compact` | Compact conversation history |
 | `/debug` | Inspect last LLM request/response |
 
-### LLM > Code (`llm:code:[mode]`)
+### Code (`code:[mode]`)
 
-Free text is sent as a coding task with tool access.
+Free text is sent as a coding task with full tool access (read/write/exec
++ docs + subagents).
 
 | Command | Description |
 |---------|-------------|
-| `/plan` | All tool calls require approval |
-| `/auto` | Writes require approval |
-| `/edit` | No approvals |
+| `/plan` | Read-only: reads auto, writes denied |
+| `/auto` | Reads auto, writes require approval |
+| `/edit` | Auto-approve everything |
 | `/clear` | Clear conversation history |
 | `/compact` | Compact conversation history |
 | `/debug` | Inspect last LLM request/response |
+
+The current sub-mode is shown below the input line and can be cycled with
+**Shift+Tab**:
+
+```
+⏸ plan mode on (shift+tab to cycle)   [yellow]
+▶▶ auto mode on (shift+tab to cycle)  [cyan]
+▶▶ edit mode on (shift+tab to cycle)  [magenta]
+```
 
 ### Server (`server`)
 
@@ -219,6 +247,7 @@ Free text is sent as a coding task with tool access.
 |---------|-------------|
 | `/list` | List all configured servers |
 | `/select` | Switch to a different server |
+| `/add` / `/update` / `/delete` | Server CRUD |
 | `/info` | Server version, graphs, status |
 | `/reload` | Hot-reload agent repo (langosh server only) |
 | `/config` | Show and edit server config (langosh server only) |
@@ -263,42 +292,124 @@ Settings stored in `~/.langosh/settings.json`:
 }
 ```
 
+## LLM providers
+
+All four providers stream tokens and emit `tool_call` / `tool_result`
+events — the UI looks the same regardless of provider:
+
+| Provider | Streaming | Tool use | Notes |
+|---|---|---|---|
+| `claude_sdk` | ✅ tokens + thinking | ✅ via in-process MCP | Uses your Claude subscription; subprocess stderr captured as status lines |
+| `anthropic` | ✅ tokens | ✅ native | Prompt caching (ephemeral) |
+| `openai` / `deepseek` / `xai` | ✅ tokens | ✅ function calling | Shared OpenAI-compatible client |
+| `bedrock_converse` | ✅ tokens | ✅ native | Prompt caching via cachePoint |
+
+The spinner above the input line updates live with character count, and
+tool calls appear inline as they happen:
+
+```
+⠋ Calling Claude Opus 4.7 (2534 chars)
+  ↳ docs_search(StateGraph conditional edges)
+  ↳ docs_search done
+  ↳ docs_read(cat langgraph/concepts/stategraph.mdx)
+  ↳ docs_read done
+```
+
+## Built-in tools
+
+Chat and code modes have access to:
+
+### Documentation tools (chat + code + graph editor)
+- `docs_search(query)` — semantic search over LangChain/LangGraph/LangSmith docs (via the [LangChain docs MCP server](https://docs.langchain.com/mcp))
+- `docs_read(command)` — shell-like read of the docs filesystem (cat, ls, tree, grep, rg)
+
+### File tools (code)
+- `read_file`, `write_file`, `edit_file`
+- `list_directory`, `glob_files`, `grep_files`
+
+### Git tools (code)
+- `git_status`, `git_diff`, `git_log`, `git_show`, `git_blame`
+
+### Python exec (code)
+- `execute_python` — sandboxed subprocess execution
+
+### Subagents (chat + code + graph editor)
+- `spawn_subagent(role, task)` — delegate focused work to a fresh agent with a restricted toolset
+
+| Role | Tools |
+|---|---|
+| `researcher` | `docs_search`, `docs_read` |
+| `explorer` | all read tools (file + git + docs) |
+| `coder` | reads + `edit_file` + `write_file` |
+
+Subagents run recursively through our provider layer, so their nested
+tool calls show up in the main stream with an indented `·` prefix. Max
+depth is 2. Useful for keeping the main conversation context lean when
+a task requires deep research or focused implementation.
+
+### Approval model (code mode)
+
+Reads are always auto-approved. Writes depend on sub-mode:
+
+| Mode | Reads | Writes |
+|---|---|---|
+| `plan` | auto | **denied** |
+| `auto` | auto | approval prompt |
+| `edit` | auto | auto |
+
 ## Project structure
 
 ```
 src/langosh/
-  main.py                    # CLI entrypoint and REPL
-  repl.py                    # Interactive loop, model loading
-  input.py                   # Prompt toolkit input with completion + history
-  state.py                   # Shared mutable state, Rich console with theme
-  settings.py / config.py    # Settings and configuration (multi-server)
+  main.py                    # CLI entrypoint
+  repl.py                    # REPL loop, model loading
+  input.py                   # Prompt toolkit widget (completion, mode bar, spinner, ctrl-c guard)
+  worker.py                  # Background worker with shared lock + spinner coordination
+  state.py                   # Shared mutable state, Rich console
+  settings.py / config.py    # Multi-server settings
+
   modes/
     __init__.py              # Mode base class, ModeStack, @command decorator
     main.py                  # MainMode (root)
-    dev.py                   # DevMode, DevGraphMode
+    dev.py                   # DevMode, DevGraphMode (the "graphs" mode)
     exec_.py                 # ExecMode, ExecGraphMode, ExecAssistantMode,
                              #   ExecThreadMode, ExecRunMode
-    llm.py                   # LlmMode, ChatMode, CodeMode
+    llm.py                   # ChatMode, CodeMode
     server.py                # ServerMode, SelectedServerMode,
                              #   ServerConfigMode, ServerApiKeysMode
     settings_.py             # SettingsMode
+
   commands/
-    typer_cmds.py            # Typer commands (/models, /use, /search, /version)
+    typer_cmds.py            # Typer commands (/models, /model, /search, /ask, /version)
+
   llm/
-    providers.py             # Multi-provider LLM dispatch
-    model_catalog.py         # Dynamic model discovery
+    providers.py             # Multi-provider dispatch (streaming)
+    claude_sdk.py            # Claude Agent SDK provider
+    anthropic.py             # Anthropic API (streaming)
+    openai_compat.py         # OpenAI / DeepSeek / xAI (streaming)
+    bedrock.py               # AWS Bedrock Converse (streaming)
+    model_catalog.py         # Model discovery
     prompts/
-      builder.py             # Builder system prompt (tool list from manifest)
-    tools/                   # CLI-side tool implementations (for /code mode)
+      chat.py                # Chat system prompt (LangChain expert)
+      code.py                # Code system prompt (LangGraph repo expert)
+      builder.py             # Graph builder prompt
+    tools/
+      file_tools.py
+      git_tools.py
+      python_exec.py
+      docs_tools.py          # LangChain docs MCP wrapper
+      subagent_tools.py      # spawn_subagent tool
+
   graphs/
     builder.py               # /create — LLM produces definition.json
     codegen.py               # /compile — definition.json -> __init__.py
-    editor.py                # /edit — multi-turn LLM edit loop
-    editor_tools.py          # Tools available to the editor LLM
-    tool_catalog.py          # Loads tool manifest from langosh-agents
+    editor.py                # multi-turn LLM edit loop
+    editor_tools.py          # tools for the editor LLM
+    tool_catalog.py          # loads tool manifest from langosh-agents
     registry.py              # langgraph.json read/write
+
   server/
-    server_client.py         # HTTP client for langosh-server / langgraph platform
+    server_client.py         # HTTP client for langosh-server / LangGraph Platform
 ```
 
 ## Agent tools and codegen
@@ -311,10 +422,10 @@ is generated from the actual tool source files
 ### How the tool catalog flows
 
 ```
-langosh-agents/tools/*.py        (source of truth: async functions with type hints + docstrings)
+langosh-agents/tools/*.py        (async functions with type hints + docstrings)
         |
         v  scripts/build_manifest.py
-langosh-agents/tools/manifest.json  (generated: name, module, params, description)
+langosh-agents/tools/manifest.json  (name, module, params, description)
         |
         v  tool_catalog.load_tool_catalog()
 langosh CLI                          (reads manifest as pure JSON — no tool imports)

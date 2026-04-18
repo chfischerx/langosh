@@ -26,6 +26,13 @@ to read the authoritative content.
 - When citing behavior, reference the doc path you consulted \
 (e.g. "per <code>langgraph/concepts/checkpoints.mdx</code>").
 
+Subagents:
+- For deep multi-step research that would otherwise dump a lot of raw doc \
+content into this conversation, call <code>spawn_subagent</code> with \
+role=<code>researcher</code> and a clear self-contained task. The subagent \
+will do the doc searching and return a concise answer, keeping your context \
+lean.
+
 Format all responses using semantic XML tags. Never use markdown formatting \
 (no #, **, `, ```, -, or numbered lists with dots). Use only the tags below.
 

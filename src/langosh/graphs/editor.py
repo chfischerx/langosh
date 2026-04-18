@@ -11,18 +11,20 @@ from ..rendering import print_renderables, render_semantic
 from . import codegen, registry
 from ..llm.tools.docs_tools import DISPATCH as _DOCS_DISPATCH
 from ..llm.tools.docs_tools import TOOLS as _DOCS_TOOLS
+from ..llm.tools.subagent_tools import DISPATCH as _SUBAGENT_DISPATCH
+from ..llm.tools.subagent_tools import TOOLS as _SUBAGENT_TOOLS
 from .editor_tools import TOOLS as _EDITOR_TOOLS
 from .editor_tools import WRITE_TOOLS, make_editor_dispatch
 
-TOOLS = _EDITOR_TOOLS + _DOCS_TOOLS
+TOOLS = _EDITOR_TOOLS + _DOCS_TOOLS + _SUBAGENT_TOOLS
 
 
 def _make_guarded_dispatcher(graph_id: str):
     """Create a guarded dispatcher for editor tools respecting agent_sub_mode."""
     editor_dispatch = make_editor_dispatch(graph_id)
-    dispatch = {**editor_dispatch, **_DOCS_DISPATCH}
+    dispatch = {**editor_dispatch, **_DOCS_DISPATCH, **_SUBAGENT_DISPATCH}
 
-    # Build a combined dispatcher that routes to editor tools + docs
+    # Build a combined dispatcher that routes to editor tools + docs + subagents
     async def _dispatch(name: str, args: dict) -> str:
         fn = dispatch.get(name)
         if not fn:
@@ -32,9 +34,9 @@ def _make_guarded_dispatcher(graph_id: str):
         except Exception as e:
             return f"Error executing {name}: {e}"
 
-    # Read tools (docs + definition reads) are always auto-approved.
+    # Read tools (docs + definition reads + subagent delegation) auto-approved.
     READ_TOOLS = {"read_definition", "list_functions", "read_function",
-                  "docs_search", "docs_read"}
+                  "docs_search", "docs_read", "spawn_subagent"}
 
     always_allowed: set[str] = set()
 
@@ -85,15 +87,33 @@ def send_edit_query(text: str) -> None:
     state.agent_messages.append({"role": "user", "content": text})
     messages_to_send = apply_window("agent", state.agent_messages, provider, model_id)
 
+    from ..input import set_processing
+    from ..llm.tools.subagent_tools import set_parent_on_event
+    from ..queries import _format_tool_args
+    token_count = {"n": 0}
+    base_msg = f"Calling {model_display_name() or model_id}"
+
+    async def _on_event(event_type: str, data: dict) -> None:
+        name = data.get("name", "")
+        if event_type == "token":
+            chunk = data.get("text", "")
+            if chunk:
+                token_count["n"] += len(chunk)
+                set_processing(f"{base_msg} ({token_count['n']} chars)")
+        elif event_type == "status":
+            text = data.get("text", "").strip()
+            if text:
+                state.console.print(f"[dim italic]  • {text}[/dim italic]")
+        elif event_type == "tool_call":
+            args_str = _format_tool_args(data.get("input", {}))
+            state.console.print(f"[dim]  ↳ {name}([/dim][cyan]{args_str}[/cyan][dim])[/dim]")
+        elif event_type == "tool_result":
+            state.console.print(f"[dim]  ↳ {name} done[/dim]")
+
+    set_parent_on_event(_on_event)
+
     start = time.monotonic()
     try:
-        async def _on_event(event_type: str, data: dict) -> None:
-            name = data.get("name", "")
-            if event_type == "tool_call":
-                state.console.print(f"[dim]  ↳ calling {name}...[/dim]")
-            elif event_type == "tool_result":
-                state.console.print(f"[dim]  ↳ {name} done[/dim]")
-
         result = asyncio.run(
             call_with_tools(
                 provider=provider,
