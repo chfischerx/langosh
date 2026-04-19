@@ -135,6 +135,8 @@ def send_edit_query(text: str) -> None:
     elapsed = time.monotonic() - start
 
     state.agent_messages.append({"role": "assistant", "content": result["text"]})
+    from ..history import save_history
+    save_history(f"builder:{graph_id}", state.agent_messages, state.agent_summary)
 
     # If the LLM wrote anything, regenerate the deployable Python module so
     # langgraph.json's pointer keeps matching the canonical JSON definition.

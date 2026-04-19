@@ -359,14 +359,22 @@ class DevGraphMode(_GitMixin, Mode):
         return new
 
     def on_enter(self) -> None:
+        from ..history import load_history
         state.active_graph_id = self.graph_id
         state.agent_editing = True
+        msgs, summary = load_history(f"builder:{self.graph_id}")
         state.agent_messages.clear()
-        state.agent_summary = ""
+        state.agent_messages.extend(msgs)
+        state.agent_summary = summary
         state.console.print(
             f"[bold cyan]Editing {self.graph_id} ({self.llm_mode}).[/bold cyan] "
             "Describe what to change."
         )
+        turns = len([m for m in msgs if m.get("role") == "user"])
+        if turns:
+            state.console.print(
+                f"[dim]Resumed — {turns} prior turn(s) in this graph's builder history.[/dim]"
+            )
         state.console.print("[dim]Type /help for commands, /back to exit.[/dim]")
 
     def on_exit(self) -> None:
@@ -409,6 +417,17 @@ class DevGraphMode(_GitMixin, Mode):
         self.llm_mode = mode
         state.agent_sub_mode = mode
         set_setting("agent_sub_mode", mode)
+        return "continue"
+
+    @command("clear", "Clear this graph's builder history (in memory and on disk)")
+    def cmd_clear(self, parts):
+        from ..history import clear_history
+        state.agent_messages.clear()
+        state.agent_summary = ""
+        clear_history(f"builder:{self.graph_id}")
+        state.console.print(
+            f"[dim]Builder history for '{self.graph_id}' cleared.[/dim]"
+        )
         return "continue"
 
     @command("compile", "Compile the selected graph")

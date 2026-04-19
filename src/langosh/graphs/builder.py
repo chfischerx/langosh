@@ -313,12 +313,18 @@ def _finalize_create(definition: dict, pc: dict) -> None:
         "  [dim]Now editing this graph · /compile to rebuild · /deploy to push[/dim]"
     )
 
+    # Persist the creation conversation as the graph's initial builder
+    # history so re-opening this graph continues where we left off.
+    from ..history import save_history
+    save_history(f"builder:{graph_id}", list(pc["messages"]), "")
+
     state.pending_create = None
     state.console.print("")
     for line in lines:
         state.console.print(line)
 
     # Auto-select the new graph so the user drops into its edit mode.
+    # DevGraphMode.on_enter will load the history we just saved.
     from ..input import get_mode_stack
     from ..modes.dev import DevGraphMode
     stack = get_mode_stack()

@@ -50,6 +50,10 @@ __pycache__/
 .ruff_cache/
 *.compile_hash
 .DS_Store
+
+# Langosh CLI state — conversation history should stay local, not in git.
+.langosh/
+**/.history.json
 """
 
 
