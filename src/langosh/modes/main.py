@@ -16,6 +16,18 @@ class MainMode(Mode):
         self._stack.push(DevMode())
         return "continue"
 
+    @command("initrepo", "Scaffold a minimal langgraph-agents repo in the current directory")
+    def cmd_initrepo(self, parts):
+        import os
+        from pathlib import Path
+        import langosh.state as state
+        from ..init_repo import init_repo
+        try:
+            init_repo(Path(os.getcwd()))
+        except Exception as e:
+            state.console.print(f"[bold red]Error:[/bold red] {e}")
+        return "continue"
+
     @command("exec", "Execute graphs and assistants")
     def cmd_exec(self, parts):
         import langosh.state as state
