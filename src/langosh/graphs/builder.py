@@ -310,12 +310,17 @@ def _finalize_create(definition: dict, pc: dict) -> None:
 
     lines.append(f"  [dim]Tokens: {pc['total_in']} ↑ / {pc['total_out']} ↓[/dim]")
     lines.append(
-        "  [dim]Next: /select "
-        + graph_id
-        + " to edit · /compile to rebuild · /deploy to push[/dim]"
+        "  [dim]Now editing this graph · /compile to rebuild · /deploy to push[/dim]"
     )
 
     state.pending_create = None
     state.console.print("")
     for line in lines:
         state.console.print(line)
+
+    # Auto-select the new graph so the user drops into its edit mode.
+    from ..input import get_mode_stack
+    from ..modes.dev import DevGraphMode
+    stack = get_mode_stack()
+    if stack is not None and not any(isinstance(m, DevGraphMode) for m in stack._stack):
+        stack.push(DevGraphMode(graph_id))

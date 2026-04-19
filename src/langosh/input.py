@@ -88,6 +88,12 @@ def set_mode_stack(stack: ModeStack) -> None:
     _mode_stack = stack
 
 
+def get_mode_stack() -> "ModeStack | None":
+    """Access the global mode stack. Used by background workers (e.g. the
+    builder) that need to push a mode after an async task completes."""
+    return _mode_stack
+
+
 _SPINNER_FRAMES = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"
 _processing_message: str | None = None
 _last_ctrlc: float = 0.0  # timestamp of last Ctrl+C press
