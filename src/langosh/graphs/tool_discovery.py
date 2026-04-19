@@ -225,7 +225,7 @@ def discover_tools() -> list[dict]:
 
     Skips tools whose constructor signatures don't match the two supported
     patterns (zero-arg, api_wrapper) and aren't listed in `_OVERRIDES`."""
-    os.environ.setdefault("USER_AGENT", "langosh-cli/0.1.0")
+    os.environ.setdefault("USER_AGENT", "langosh/0.1.0")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         utilities = _load_utilities()

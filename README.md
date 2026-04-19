@@ -103,8 +103,8 @@ langosh version
 ### From source (for contributing)
 
 ```sh
-git clone https://github.com/<your-org>/langosh-cli.git
-cd langosh-cli
+git clone https://github.com/chfischerx/langosh.git
+cd langosh
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .

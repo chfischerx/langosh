@@ -121,7 +121,7 @@ __pycache__/
 _README = """\
 # agents
 
-A LangGraph agents repository, scaffolded by the [Langosh CLI](../langosh-cli).
+A LangGraph agents repository, scaffolded by the [Langosh CLI](https://github.com/chfischerx/langosh).
 
 ## Structure
 
@@ -155,7 +155,7 @@ Langosh resolves every tool at build time by introspecting
 deployed graph has no runtime tool-discovery code. Run `/fetchtools` in
 Langosh at any time to refresh the cached catalog.
 
-See the [Langosh README](../langosh-cli/README.md) for the full workflow.
+See the [Langosh README](https://github.com/chfischerx/langosh#readme) for the full workflow.
 """
 
 
