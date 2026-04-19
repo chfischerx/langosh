@@ -26,6 +26,8 @@ dependencies = [
   "langchain>=1.0",
   "langchain-anthropic>=1.0",
   "langchain-openai>=0.3",
+  "langchain-community>=0.3",
+  "langchain-experimental>=0.3",
   "httpx>=0.27",
 ]
 
@@ -35,6 +37,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["graphs"]
+"""
+
+
+_MCP_JSON = """\
+{
+  "builtins": [
+    "wikipedia",
+    "ddg_search"
+  ]
+}
 """
 
 
@@ -62,15 +74,30 @@ A LangGraph agents repository, scaffolded by the [Langosh CLI](../langosh-cli).
 - `graphs/` — one subdirectory per graph. Each graph has a `definition.json`
   (authored by Langosh via the LLM) and an auto-generated `__init__.py`
   (produced by Langosh's compiler via `/compile` or `/deploy`).
+- `mcp.json` — tool catalog: which LangChain community builtins to
+  expose to the graph. All tools are resolved at build time by the
+  Langosh CLI; the server runs no tool-discovery code.
 - `pyproject.toml` — Python package metadata and dependencies.
 
 ## Next steps
 
 1. Run `langosh` in this directory.
-2. Use `/graphs /create` to generate your first graph with LLM guidance.
-3. Iterate with `/select` + free-text edits.
-4. `/compile` to emit the runnable Python module.
-5. `/deploy` to push the repo and hot-reload the server.
+2. Run `/fetchtools` to populate the tool catalog from `mcp.json`.
+3. Use `/graphs /create` to generate your first graph with LLM guidance.
+4. Iterate with `/select` + free-text edits.
+5. `/compile` to emit the runnable Python module.
+6. `/deploy` to push the repo and hot-reload the server.
+
+## Adding tools
+
+Edit `mcp.json` → `builtins` to pick from Langosh's curated LangChain
+community tools (e.g. `wikipedia`, `ddg_search`, `python_repl`, `arxiv`,
+`requests_get`, `tavily_search`, `bash_shell`, `read_file`, `write_file`,
+`list_dir`, `sql_query`).
+
+After editing, run `/fetchtools` in Langosh to refresh the catalog. The
+CLI resolves every tool at compile time — the deployed graph has no
+runtime tool-discovery code.
 
 See the [Langosh README](../langosh-cli/README.md) for the full workflow.
 """
@@ -84,6 +111,7 @@ _FILES: dict[str, str] = {
     "pyproject.toml": _PYPROJECT_TOML,
     ".gitignore": _GITIGNORE,
     "README.md": _README,
+    "mcp.json": _MCP_JSON,
     "graphs/__init__.py": _GRAPHS_INIT,
 }
 

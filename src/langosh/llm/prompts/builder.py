@@ -1,9 +1,12 @@
 """Builder system prompt for agent creation.
 
-The list of available agent tools is loaded from the langosh-agents repo's
-`tools/manifest.json` so the prompt stays in sync with what codegen can
-actually wire up. Add or remove tools by editing the tool source files and
-re-running `scripts/build_manifest.py` in langosh-agents.
+The list of available agent tools is loaded from the cached tool catalog
+(~/.langosh/tools_cache/). Refresh it with the `/fetchtools` command —
+it resolves the curated LangChain builtins listed in `mcp.json` at the
+agents-repo root.
+
+All tools are fixed at build time: the compiled graph module imports
+them directly and has no runtime tool-discovery code.
 """
 
 from ...graphs.tool_catalog import load_tool_catalog
@@ -192,6 +195,13 @@ Use when the LLM needs to reason about which tools to call, chain multiple tool 
 
 Every tool below can be referenced by name in `tool` nodes (via the `"tool"` field) or in `llm` nodes (via the `"tools"` array). For `tool` nodes, use the parameter names shown below as keys in `"args"` and `"args_from_state"`.
 
+Source tags:
+- `[builtin:<key>]` — curated tool with a hand-tuned description and verified ctor args. Preferred when available.
+- `[community:<submod>]` — auto-discovered from `langchain_community.tools`. Many require a provider API key (e.g. `BING_SUBSCRIPTION_KEY`, `TAVILY_API_KEY`, `SERPER_API_KEY`) or optional pip extras on the server. When you pick one, mention the required env var in the agent's system prompt so the user knows to set it.
+- `[experimental:<submod>]` — from `langchain_experimental.tools`. Treat the same as community.
+
+If the user's request needs a capability no tool below covers (e.g. sending to a specific third-party platform like Telegram), fall back to a `function` node with custom Python that uses `requests_post` or the platform's HTTP API directly — don't invent a tool that isn't listed.
+
 {available_tools}
 
 ## How to make changes
@@ -248,11 +258,16 @@ Prefer `edit_function` and `edit_definition` for small changes. Only use
 
 
 def _render_available_tools() -> str:
-    """Render the catalog with parameter details for the builder LLM."""
+    """Render the catalog with parameter details + source for the builder LLM."""
     specs = load_tool_catalog()
+    if not specs:
+        return (
+            "(No tools loaded. Run `/fetchtools` in Langosh to refresh the "
+            "catalog from `mcp.json` and the curated builtins.)"
+        )
     lines: list[str] = []
     for s in specs:
-        lines.append(f"- {s.signature} — {s.description}")
+        lines.append(f"- {s.signature}  [{s.source}] — {s.description}")
         param_parts = []
         for p in s.parameters:
             detail = f"{p.name} ({p.type}"

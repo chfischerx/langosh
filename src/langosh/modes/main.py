@@ -28,6 +28,11 @@ class MainMode(Mode):
             state.console.print(f"[bold red]Error:[/bold red] {e}")
         return "continue"
 
+    @command("fetchtools", "Refresh the tool catalog from curated LangChain builtins")
+    def cmd_fetchtools(self, parts):
+        _do_fetchtools()
+        return "continue"
+
     @command("exec", "Execute graphs and assistants")
     def cmd_exec(self, parts):
         import langosh.state as state
@@ -79,3 +84,27 @@ class MainMode(Mode):
     @command("version", "Show the application version")
     def cmd_version(self, parts):
         return "dispatch"
+
+
+def _do_fetchtools() -> None:
+    """Shared /fetchtools implementation. Introspects LangChain community +
+    experimental tool packages, merges with the curated registry, writes the
+    per-agents-repo cache, prints a summary."""
+    import langosh.state as state
+    from ..graphs.tool_fetcher import fetch_catalog
+    try:
+        summary = fetch_catalog()
+    except Exception as e:
+        state.console.print(f"[bold red]Error fetching tools:[/bold red] {e}")
+        return
+    state.console.print(
+        f"[green]Refreshed tool catalog[/green] [dim]({summary['agents_path']})[/dim]"
+    )
+    for source, names in sorted(summary["by_source"].items()):
+        state.console.print(
+            f"  [cyan]{source}[/cyan]  [dim]{len(names)} tools[/dim]"
+        )
+    state.console.print(
+        f"[bold]Total:[/bold] {summary['total']} tools "
+        f"[dim](curated: {summary['curated']}, discovered: {summary['discovered']})[/dim]"
+    )

@@ -153,47 +153,51 @@ roles. Node types:
 - **`type: "function"`** — arbitrary async Python. Escape hatch for logic
   that doesn't fit the other types.
 
-### Tool auto-discovery
+### Tool discovery: curated LangChain tools, build-time only
 
 Langosh never asks the LLM to *guess* which tools exist — it tells it
-exactly what's available. Tools live in the sibling `langosh-agents` repo
-as plain `async def` functions:
+exactly what's available, sourced from one place: a curated registry of
+popular LangChain community tools (Wikipedia, DuckDuckGo, Tavily,
+Python REPL, arXiv, PubMed, StackExchange, YouTube, HTTP requests,
+shell, file-management, …). All resolution happens at build time inside
+the Langosh CLI. The deployed graph has **no runtime tool-discovery code**
+— no MCP client, no network call at module import, no surprises at boot.
 
-```python
-# langosh-agents/tools/web_search.py
-async def web_search(query: str, max_results: int = 5) -> list[dict]:
-    """Search the web and return a list of {title, url, snippet} results."""
-    ...
+The agents-repo root carries a tiny `mcp.json` selecting which builtins
+to expose:
+
+```json
+{
+  "builtins": ["wikipedia", "ddg_search", "tavily_search", "python_repl"]
+}
 ```
 
-A build step (`scripts/build_manifest.py` in langosh-agents) introspects
-every tool — type hints, defaults, docstring — and writes a single
-`tools/manifest.json` with name, module path, parameter schema, and
-description.
+Omit `builtins` (or the file entirely) to default to the full registry.
 
-Langosh reads that manifest at runtime via `tool_catalog.load_tool_catalog()`
-and splices it into the **builder prompt**. The LLM sees each tool's exact
-signature, parameter names, types, and what each tool is for. When you ask
-the LLM to add a tool node, it picks from a known, typed catalog — no
-hallucinated tool names, no invented parameters.
+Run `/fetchtools` in Langosh to resolve the list and cache the catalog
+in `~/.langosh/tools_cache/<hash>.json`. The builder LLM reads from the
+cache: tool name, description, parameters, and source tag
+(`builtin:wikipedia`). No hallucinated tool names, no invented
+parameters.
 
-Both usage paths — as a `tool` graph node *and* as a tool in an `llm`
-node's tool list — resolve to the same underlying `async def` function. A
-tool is written once and usable deterministically or via LLM reasoning.
+Every tool is usable the same way in a graph — as a `type: "tool"` node
+for deterministic calls, or inside an `llm` node's `"tools": [...]` list
+for ReAct-style reasoning. The generated module imports each tool
+statically and populates a single `_tools_by_name` dict at module load.
 
 ### How the catalog flows
 
 ```
-langosh-agents/tools/*.py           (source of truth: async functions)
-         │
-         v  scripts/build_manifest.py
-langosh-agents/tools/manifest.json  (name, module, params, description)
-         │
-         v  tool_catalog.load_tool_catalog()
-Langosh CLI                         (reads manifest as pure JSON — no tool imports)
-         │
-         ├─> Builder prompt         (LLM sees exact tool signatures + parameter details)
-         └─> Codegen                (emits import statements + validates args)
+mcp.json (builtins)  +  Langosh curated registry
+                │
+                v  /fetchtools
+          builtin registry lookup
+                │
+                v  catalog
+~/.langosh/tools_cache/<hash>.json
+                │
+                ├─> Builder prompt  (tool signatures + parameters)
+                └─> Codegen         (static imports + ctors in the graph module)
 ```
 
 ### The graph compiler
@@ -341,6 +345,8 @@ Available in every mode:
 | `/code` | LLM with tool use |
 | `/server` | Server management |
 | `/settings` | CLI settings |
+| `/initrepo` | Scaffold a minimal langgraph-agents repo in the current directory |
+| `/fetchtools` | Refresh the tool catalog from the curated LangChain builtins |
 | `/version` | Show the application version |
 
 ### Graphs (`graphs`)
@@ -352,6 +358,7 @@ Requires the CLI to be started within a langgraph code repository.
 | `/list` | List all graphs from the current repo |
 | `/select` | Select an existing graph to work with |
 | `/create` | Create a new graph (LLM-generated) |
+| `/fetchtools` | Refresh the tool catalog from the curated LangChain builtins |
 | `/deploy` | Commit, push, and reload agents on the server |
 | `/status` | Show git status |
 | `/commit` | Commit all changes |

@@ -1,27 +1,20 @@
-"""Load the agent-tool catalog from the langosh-agents repo.
+"""Unified tool catalog sourced from curated LangChain builtins.
 
-The CLI doesn't import agent tool modules (those live in `langosh-agents/tools/`
-and may pull optional deps like slack-sdk). It only needs to *describe* them
-to the LLM in the builder prompt and *write import statements* against them
-in codegen. Both of those are pure data, sourced from
-`<agents-path>/tools/manifest.json`.
+Entries live on disk in a cache populated by `/fetchtools`. The builder
+prompt and codegen both read through `load_tool_catalog()`.
 
-Single source of truth: run `scripts/build_manifest.py` in langosh-agents to
-regenerate the manifest from function signatures and docstrings.
+Every tool in the catalog is statically resolvable at build time —
+`imports` + `ctor` get emitted directly into the compiled graph module.
+No runtime discovery happens in the generated code.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from ..settings import get_agents_path
-
-_MANIFEST_RELPATH = Path("tools") / "manifest.json"
-_REQUIRED_TOOL_FIELDS = ("name", "module", "function", "description", "parameters")
-_REQUIRED_PARAM_FIELDS = ("name", "type", "required", "description")
+from . import tool_cache
 
 
 @dataclass(frozen=True)
@@ -36,14 +29,14 @@ class ParamSpec:
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
-    module: str
-    function: str
     description: str
+    source: str  # "builtin:<key>"
     parameters: tuple[ParamSpec, ...] = field(default_factory=tuple)
+    imports: tuple[str, ...] = field(default_factory=tuple)
+    ctor: str = ""
 
     @property
     def signature(self) -> str:
-        """Render human-readable signature from parameters."""
         parts = []
         for p in self.parameters:
             if p.required:
@@ -54,100 +47,49 @@ class ToolSpec:
 
     @property
     def param_names(self) -> set[str]:
-        """Set of parameter names for quick lookups."""
         return {p.name for p in self.parameters}
 
-
-_cache: tuple[Path, list[ToolSpec]] | None = None
-
-
-def manifest_path() -> Path:
-    """Absolute path to the catalog manifest."""
-    return get_agents_path() / _MANIFEST_RELPATH
+    @property
+    def is_builtin(self) -> bool:
+        return self.source.startswith("builtin:")
 
 
-def _parse_param(raw: dict, tool_name: str, idx: int, path: Path) -> ParamSpec:
-    missing = [f for f in _REQUIRED_PARAM_FIELDS if f not in raw]
-    if missing:
-        raise ValueError(
-            f"Tool '{tool_name}' parameter #{idx} in {path} is missing "
-            f"fields: {', '.join(missing)}."
-        )
+def _parse_param(raw: dict) -> ParamSpec:
     return ParamSpec(
         name=raw["name"],
-        type=raw["type"],
-        required=raw["required"],
-        description=raw["description"],
+        type=raw.get("type", "str"),
+        required=bool(raw.get("required", False)),
+        description=raw.get("description", ""),
         default=raw.get("default"),
     )
 
 
+def _entry_to_spec(entry: dict) -> ToolSpec:
+    params = tuple(_parse_param(p) for p in entry.get("parameters", []))
+    return ToolSpec(
+        name=entry["name"],
+        description=entry.get("description", ""),
+        source=entry.get("source", ""),
+        parameters=params,
+        imports=tuple(entry.get("imports") or []),
+        ctor=entry.get("ctor", ""),
+    )
+
+
 def load_tool_catalog() -> list[ToolSpec]:
-    """Return the agent tool catalog. Cached per agents-path.
+    """Return the cached catalog.
 
-    Raises FileNotFoundError if the manifest is missing, ValueError if it is
-    malformed. Both messages name the expected path so the user can act.
+    If the cache is missing, returns an empty list. The builder prompt
+    shows a hint to run `/fetchtools`; codegen raises a clear error
+    when an unknown tool is referenced.
     """
-    global _cache
-    path = manifest_path()
-    if _cache is not None and _cache[0] == path:
-        return _cache[1]
-
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"Tool manifest not found at {path}. "
-            f"Run `python scripts/build_manifest.py` in the langosh-agents repo."
-        )
-
-    try:
-        raw = json.loads(path.read_text())
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Tool manifest at {path} is not valid JSON: {e}") from e
-
-    if not isinstance(raw, list):
-        raise ValueError(
-            f"Tool manifest at {path} must be a JSON array of tool entries."
-        )
-
-    specs: list[ToolSpec] = []
-    seen: set[str] = set()
-    for i, entry in enumerate(raw):
-        if not isinstance(entry, dict):
-            raise ValueError(
-                f"Tool manifest entry #{i} in {path} must be an object."
-            )
-        missing = [f for f in _REQUIRED_TOOL_FIELDS if f not in entry]
-        if missing:
-            raise ValueError(
-                f"Tool manifest entry #{i} in {path} is missing fields: "
-                f"{', '.join(missing)}."
-            )
-        name = entry["name"]
-        if name in seen:
-            raise ValueError(
-                f"Tool manifest at {path} has duplicate tool name: {name!r}."
-            )
-        seen.add(name)
-
-        params = tuple(
-            _parse_param(p, name, j, path)
-            for j, p in enumerate(entry["parameters"])
-        )
-        specs.append(
-            ToolSpec(
-                name=name,
-                module=entry["module"],
-                function=entry["function"],
-                description=entry["description"],
-                parameters=params,
-            )
-        )
-
-    _cache = (path, specs)
-    return specs
+    agents_path = get_agents_path()
+    raw = tool_cache.read_cache(agents_path)
+    if raw is None:
+        return []
+    return [_entry_to_spec(entry) for entry in raw]
 
 
 def invalidate_cache() -> None:
-    """Drop the cached catalog. Call after switching agents-path at runtime."""
-    global _cache
-    _cache = None
+    """Drop the on-disk cache so the next build/compile re-fetches."""
+    tool_cache.invalidate(get_agents_path())

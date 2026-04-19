@@ -195,6 +195,12 @@ class DevMode(_GitMixin, Mode):
             state.console.print(f"  {i}. [cyan]{gid}[/cyan] — {mod}")
         return "continue"
 
+    @command("fetchtools", "Refresh the tool catalog from curated LangChain builtins")
+    def cmd_fetchtools(self, parts):
+        from .main import _do_fetchtools
+        _do_fetchtools()
+        return "continue"
+
     @command("create", "Create a new graph with LLM guidance")
     def cmd_create(self, parts):
         import questionary

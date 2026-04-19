@@ -83,6 +83,20 @@ def fetch_models_from_apis() -> None:
     state.console.print(f"[dim]Loaded {len(state.model_list)} models from APIs[/dim]")
 
 
+def _ensure_tool_cache() -> None:
+    """Run /fetchtools on first launch so the builder has a catalog to work
+    with. The cache is per-agents-path; subsequent runs re-use it silently.
+    Users can refresh with /fetchtools at any time."""
+    from .graphs import tool_cache
+    from .modes.main import _do_fetchtools
+    from .settings import get_agents_path
+
+    if tool_cache.read_cache(get_agents_path()) is not None:
+        return
+    state.console.print("[dim]  tools:  no cache — running /fetchtools[/dim]")
+    _do_fetchtools()
+
+
 def repl(app) -> None:
     """Interactive REPL with hierarchical mode system."""
     from .history import load_history
@@ -131,6 +145,8 @@ def repl(app) -> None:
     else:
         state.console.print(f"[dim]  server: {server_url}[/dim]")
     state.console.print(f"[dim]  path:   {agents_path}[/dim]")
+
+    _ensure_tool_cache()
 
     # Re-point Rich Console to sys.stdout so patch_stdout can intercept it
     from rich.console import Console

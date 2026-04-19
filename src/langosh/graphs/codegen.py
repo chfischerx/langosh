@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 
 from .registry import graph_dir
-from .tool_catalog import load_tool_catalog, manifest_path
+from .tool_catalog import load_tool_catalog
 
 DEFAULT_MODEL = "anthropic:claude-sonnet-4-5-20250929"
 
@@ -34,28 +34,70 @@ _STATE_TYPE_MAP = {
 
 
 def _resolve_tool_imports(tool_names: list[str]) -> tuple[list[str], list[str]]:
-    """Return (import_lines, tool_symbols).
+    """Return (preamble_lines, tool_expressions).
 
-    Unknown tools raise ValueError so the user sees a clear error instead of a
-    runtime ImportError when the server tries to load the generated module.
-    Tool name → (module, symbol) is sourced from the langosh-agents manifest.
+    preamble_lines: lines to emit once at the top of the generated module —
+    static imports + tool instantiations. No runtime discovery happens on
+    the server; every tool is resolved here at compile time.
+
+    tool_expressions: one Python expression per input tool name, used
+    wherever the tool is referenced (e.g. `_tool("wikipedia")`).
+
+    Unknown tool names raise ValueError with a clear message pointing the
+    user at `/fetchtools`.
     """
-    catalog = {spec.name: (spec.module, spec.function) for spec in load_tool_catalog()}
-    by_module: dict[str, list[str]] = {}
-    for name in tool_names:
-        if name not in catalog:
-            raise ValueError(
-                f"Unknown tool '{name}'. Add an entry to the tool manifest at "
-                f"{manifest_path()} or remove it from the definition."
-            )
-        mod, symbol = catalog[name]
-        by_module.setdefault(mod, []).append(symbol)
-    import_lines = [
-        f"from {mod} import {', '.join(sorted(set(syms)))}"
-        for mod, syms in sorted(by_module.items())
-    ]
-    tool_symbols = [catalog[n][1] for n in tool_names]
-    return import_lines, tool_symbols
+    catalog = {spec.name: spec for spec in load_tool_catalog()}
+    missing = [n for n in tool_names if n not in catalog]
+    if missing:
+        raise ValueError(
+            f"Unknown tool(s): {', '.join(missing)}. "
+            "Run `/fetchtools` in Langosh to refresh the catalog, "
+            "or remove them from the definition."
+        )
+
+    selected = [catalog[n] for n in tool_names]
+
+    # All compile-time tools must have static imports + ctor. MCP tools
+    # (or anything else without a ctor) can't be compiled into a graph —
+    # they would require runtime discovery which we deliberately avoid.
+    invalid = [s for s in selected if not s.imports or not s.ctor]
+    if invalid:
+        names = ", ".join(s.name for s in invalid)
+        raise ValueError(
+            f"Tool(s) {names} cannot be compiled into a graph — only "
+            "statically-resolvable LangChain tools are supported. "
+            "Remove them from the definition."
+        )
+
+    preamble: list[str] = []
+
+    # Deduplicate imports across all selected tools.
+    seen_imports: set[str] = set()
+    import_lines: list[str] = []
+    for spec in selected:
+        for imp in spec.imports:
+            if imp not in seen_imports:
+                seen_imports.add(imp)
+                import_lines.append(imp)
+    preamble.extend(import_lines)
+
+    # _tools_by_name dict: name → instantiated tool object.
+    preamble.append("")
+    preamble.append("_tools_by_name = {")
+    for spec in selected:
+        preamble.append(f"    {spec.name!r}: {spec.ctor},")
+    preamble.append("}")
+    preamble.extend([
+        "",
+        "def _tool(_name):",
+        "    _t = _tools_by_name.get(_name)",
+        "    if _t is None:",
+        '        raise RuntimeError(f"Tool not loaded: {_name}")',
+        "    return _t",
+    ])
+
+    tool_expressions = [f'_tool({name!r})' for name in tool_names]
+    return preamble, tool_expressions
 
 
 def _model_lines(pinned_model: str | None) -> tuple[str, str]:
