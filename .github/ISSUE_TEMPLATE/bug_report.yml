@@ -1,0 +1,89 @@
+name: Bug Report
+description: Report a crash, error, or unexpected behavior
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill out as much as possible.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: When I run `/create` in Langosh, it crashes with...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `langosh` in an agents repo
+        2. `/graphs /create`
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: I expected it to...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Langosh version
+      placeholder: e.g. 0.1.0 (run `langosh --version`)
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: e.g. 3.12.4 (run `python --version`)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: LLM provider (if the bug involves a chat/code/builder turn)
+      options:
+        - "N/A"
+        - anthropic
+        - openai / openai-compatible
+        - bedrock_converse
+        - claude_sdk
+        - other
+
+  - type: input
+    id: server
+    attributes:
+      label: LangGraph server (if the bug involves /exec or /run)
+      description: Server flavor and version — `langgraph dev`, `langgraph up`, LangSmith-hosted, etc.
+      placeholder: e.g. langgraph up 0.4.14
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or error output
+      render: shell

@@ -1,48 +1,42 @@
 # Langosh
 
-**A guided CLI to create, test, and run LangGraph agents.**
+A CLI for building and running LangGraph agents. You scaffold a repo, ask
+an LLM to write you a graph, test it locally with `langgraph dev`, and
+point the same CLI at a LangSmith / LangGraph Platform deployment to
+drive runs against a real server.
 
-LangChain and LangGraph are exceptional frameworks. LangChain popularized the
-composable agent stack, and LangGraph is the most versatile tool available
-today for building stateful, multi-step agents — from simple ReAct loops to
-complex custom `StateGraph` pipelines with conditional routing, checkpointing,
-and interrupts. The teams have built tools that power agents in production at
-serious scale.
+The gist: LangGraph is powerful but there's a lot to learn — message
+types, reducers, checkpointers, threads vs. runs vs. assistants,
+streaming modes, tool bindings. Langosh doesn't hide any of that, but it
+tries to put the steps in the order you actually do them, and lets the
+LLM handle the `StateGraph(...).add_node(...)` boilerplate so you can
+spend more time on graph logic than on imports.
 
-That versatility comes with a cost: the learning curve is steep. There's a lot
-of surface area to absorb before you can confidently ship something — message
-types, state reducers, the Platform API, threads vs. runs vs. assistants,
-streaming modes, checkpointers, subgraphs, tool calling patterns. Newcomers
-often spend more time reading docs than building.
+A few things worth calling out:
 
-**Langosh exists to shorten that curve.** It's an opinionated CLI around two
-core workflows:
-
-1. **Graph development** — create a new graph with LLM guidance, edit it
-   iteratively, compile it, deploy it, test it. One command per step, in the
-   order you actually do them.
-2. **Graph execution** — pick a server, pick a graph, pick an assistant,
-   manage threads, make runs. The concepts are exposed as a mode tree so you
-   always know what scope you're in and what commands make sense here.
-
-The LLM side is first-class too: built-in chat with live LangChain docs
-lookup (MCP), a code mode with full file/git/exec tooling, subagents for
-focused research, and live token streaming across every provider
-(Anthropic, OpenAI-compatible, AWS Bedrock, Claude Agent SDK). All with a
-single-window input widget that stays responsive while work runs in the
-background.
-
-The goal is a CLI where `create → deploy → test → run` feels obvious — so you
-can spend your time building agents instead of reading about them.
+- **Graphs are authored as JSON, not Python.** The LLM edits a
+  `definition.json`; a compiler emits the Python module. Easier for the
+  LLM to reason about, easier for you to diff.
+- **Tool resolution happens at build time.** The builder sees a live
+  catalog pulled from `langchain_community.tools` +
+  `langchain_experimental.tools`; the generated graph just imports what
+  it needs. No runtime discovery, no surprises at server boot.
+- **Any LangGraph-Platform-compatible server works.** Local
+  `langgraph dev` / `langgraph up` for iteration, LangSmith-hosted for
+  production.
+- **There's a built-in `/chat` and `/code` mode** that uses whichever
+  LLM provider you've configured (Anthropic, OpenAI-style, Bedrock, or
+  the Claude Agent SDK) — handy for quick doc lookups and code edits
+  without leaving the terminal.
 
 ## Contents
 
 - [Works with LangGraph Platform / LangSmith](#works-with-langgraph-platform--langsmith)
-- [Testing an agents repo locally](#testing-an-agents-repo-locally)
-- [LLM-assisted graph development](#llm-assisted-graph-development)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Usage](#usage)
+- [LLM-assisted graph development](#llm-assisted-graph-development)
+- [Testing an agents repo locally](#testing-an-agents-repo-locally)
 - [Navigation](#navigation)
 - [Mode tree](#mode-tree)
 - [Universal commands](#universal-commands)
@@ -80,58 +74,50 @@ LangGraph Platform / LangSmith pick up the new code via their own deploy
 integration on the pushed branch. If the repo has no remote, the push is
 skipped — useful during local-only iteration with `langgraph dev`.
 
-## Testing an agents repo locally
+## Requirements
 
-`langgraph-cli` is wired into the scaffold (`[dependency-groups] dev`).
-After `/initrepo` + `uv sync`, use one of the two commands LangGraph
-ships for local testing — both read the repo's `langgraph.json` and
-load any env vars declared via its `env` field. See the [LangSmith
-local dev docs](https://docs.langchain.com/langsmith/local-dev-testing)
-for the full reference.
+- Python 3.11+
+- A running LangGraph-compatible server instance (optional — only needed for exec mode)
+- An agents repo in the current working directory (create one with `/initrepo`)
 
-### `langgraph dev` — fast, in-process
+## Installation
 
-```bash
-uv run langgraph dev
+From PyPI:
+
+```sh
+pip install langosh
 ```
 
-- Default port: `2024`.
-- **Hot reload is on by default** — edit `definition.json`, run
-  `/compile` in Langosh (or save the generated `__init__.py`), and the
-  dev server picks up the change.
-- No Docker. State persists in local pickle files — good enough for
-  iterating on graph logic.
-- Open the Studio UI at
-  `https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024`
-  for a visual graph runner.
+Or with `uv`:
 
-Point Langosh at it once via `/server /add` (URL `http://localhost:2024`)
-and `/select` it — now `/exec` in Langosh hits the dev server for
-`/test`, `/run`, threads, and assistants.
-
-### `langgraph up --watch` — production-like, Dockerized
-
-```bash
-uv run langgraph up --watch
+```sh
+uv tool install langosh
 ```
 
-- Default port: `8123`.
-- Runs the **full Docker stack** — PostgreSQL + Redis + the server —
-  so threads, assistants, and long-running runs persist the same way
-  they will in production.
-- `--watch` enables hot reload (opt-in here, default-on in `dev`).
-- Requires Docker. Slower to boot than `dev`; use this right before
-  deploying to catch any Postgres-/Redis-specific issues.
+Verify:
 
-`uv run langgraph up --recreate` does a full rebuild — handy after
-bumping dependencies in `pyproject.toml`.
+```sh
+langosh version
+```
 
-### Env vars
+### From source (for contributing)
 
-Both commands load `.env` (the path is declared in `langgraph.json`'s
-`env` field — the scaffold sets it to `./.env`). `/initrepo` pre-fills
-`LANGSMITH_PROJECT` and an empty `LANGSMITH_API_KEY`; add your LLM /
-tool keys there before launching.
+```sh
+git clone https://github.com/<your-org>/langosh-cli.git
+cd langosh-cli
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+## Usage
+
+```sh
+langosh
+```
+
+The CLI starts in **main mode**. Type `/` to see available commands with tab
+completion, or use arrow keys to recall input history.
 
 ## LLM-assisted graph development
 
@@ -285,28 +271,58 @@ Every step above is one command. The LLM never touches runtime Python;
 you never hand-write state reducers; the server always sees a freshly
 compiled module that matches the JSON you just approved.
 
-## Requirements
+## Testing an agents repo locally
 
-- Python 3.11+
-- A running LangGraph-compatible server instance (optional — only needed for exec mode)
-- An agents repo in the current working directory (create one with `/initrepo`)
+`langgraph-cli` is wired into the scaffold (`[dependency-groups] dev`).
+After `/initrepo` + `uv sync`, use one of the two commands LangGraph
+ships for local testing — both read the repo's `langgraph.json` and
+load any env vars declared via its `env` field. See the [LangSmith
+local dev docs](https://docs.langchain.com/langsmith/local-dev-testing)
+for the full reference.
 
-## Installation
+### `langgraph dev` — fast, in-process
 
-```sh
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+```bash
+uv run langgraph dev
 ```
 
-## Usage
+- Default port: `2024`.
+- **Hot reload is on by default** — edit `definition.json`, run
+  `/compile` in Langosh (or save the generated `__init__.py`), and the
+  dev server picks up the change.
+- No Docker. State persists in local pickle files — good enough for
+  iterating on graph logic.
+- Open the Studio UI at
+  `https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024`
+  for a visual graph runner.
 
-```sh
-langosh
+Point Langosh at it once via `/server /add` (URL `http://localhost:2024`)
+and `/select` it — now `/exec` in Langosh hits the dev server for
+`/test`, `/run`, threads, and assistants.
+
+### `langgraph up --watch` — production-like, Dockerized
+
+```bash
+uv run langgraph up --watch
 ```
 
-The CLI starts in **main mode**. Type `/` to see available commands with tab
-completion, or use arrow keys to recall input history.
+- Default port: `8123`.
+- Runs the **full Docker stack** — PostgreSQL + Redis + the server —
+  so threads, assistants, and long-running runs persist the same way
+  they will in production.
+- `--watch` enables hot reload (opt-in here, default-on in `dev`).
+- Requires Docker. Slower to boot than `dev`; use this right before
+  deploying to catch any Postgres-/Redis-specific issues.
+
+`uv run langgraph up --recreate` does a full rebuild — handy after
+bumping dependencies in `pyproject.toml`.
+
+### Env vars
+
+Both commands load `.env` (the path is declared in `langgraph.json`'s
+`env` field — the scaffold sets it to `./.env`). `/initrepo` pre-fills
+`LANGSMITH_PROJECT` and an empty `LANGSMITH_API_KEY`; add your LLM /
+tool keys there before launching.
 
 ## Navigation
 

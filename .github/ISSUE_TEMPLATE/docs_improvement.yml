@@ -1,0 +1,45 @@
+name: Documentation Improvement
+description: Report missing, unclear, or incorrect documentation
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us improve Langosh's documentation.
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type of documentation issue
+      options:
+        - Missing documentation
+        - Unclear or confusing
+        - Incorrect or outdated
+        - Broken link
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Where is this located?
+      description: Document title, page, or link
+      placeholder: e.g. README.md > "Installation", docs/langgraph_api.md
+    validations:
+      required: true
+
+  - type: textarea
+    id: issue
+    attributes:
+      label: What's the problem?
+      description: What's missing, unclear, or wrong?
+      placeholder: The README doesn't explain how to... / This section says X but it should be Y...
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested improvement
+      placeholder: It would help to add... / This could be reworded as...

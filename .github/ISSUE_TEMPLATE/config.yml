@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability
+    url: https://github.com/chfischerx/langosh/security/advisories/new
+    about: Report a security vulnerability privately. Do not open a public issue.
+  - name: Questions or Support
+    url: https://github.com/chfischerx/langosh/discussions
+    about: Ask questions or discuss Langosh in Discussions instead.

@@ -1,0 +1,47 @@
+name: Deploy Docs to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'README.md'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy README.md into docs/ for Jekyll browse view
+        run: |
+          cp README.md docs/README.md
+          printf '%s\n' '---' 'permalink: /readme' '---' > docs/.front.tmp
+          cat docs/.front.tmp docs/README.md > docs/README.md.new
+          mv docs/README.md.new docs/README.md
+          rm docs/.front.tmp
+          echo "✓ README.md copied with Jekyll front matter"
+      - uses: actions/configure-pages@v5
+      - name: Build with Jekyll
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./docs
+          destination: ./_site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./_site
+      - uses: actions/deploy-pages@v4
+        id: deployment
