@@ -1,4 +1,4 @@
-"""Unified tool catalog sourced from curated LangChain builtins.
+"""Tool catalog sourced from LangChain community + experimental discovery.
 
 Entries live on disk in a cache populated by `/fetchtools`. The builder
 prompt and codegen both read through `load_tool_catalog()`.
@@ -30,7 +30,7 @@ class ParamSpec:
 class ToolSpec:
     name: str
     description: str
-    source: str  # "builtin:<key>"
+    source: str  # "community:<submod>" | "experimental:<submod>"
     parameters: tuple[ParamSpec, ...] = field(default_factory=tuple)
     imports: tuple[str, ...] = field(default_factory=tuple)
     ctor: str = ""
@@ -48,10 +48,6 @@ class ToolSpec:
     @property
     def param_names(self) -> set[str]:
         return {p.name for p in self.parameters}
-
-    @property
-    def is_builtin(self) -> bool:
-        return self.source.startswith("builtin:")
 
 
 def _parse_param(raw: dict) -> ParamSpec:

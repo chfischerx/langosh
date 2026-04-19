@@ -1,8 +1,8 @@
-"""Read/write the langosh-agents `langgraph.json` registry.
+"""Read/write the agents-repo `langgraph.json` registry.
 
 Each entry maps `graph_id → "module:variable"` (LangGraph Platform convention).
-The langosh CLI uses this to scaffold and remove graphs; the langosh-server
-loads it at boot to register graphs.
+The Langosh CLI uses this to scaffold and remove graphs; the server loads it
+at boot to register graphs.
 """
 
 import json

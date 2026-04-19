@@ -37,6 +37,13 @@ agent_messages: list[dict] = []
 agent_summary: str = ""
 agent_editing: bool = False
 
+# When a /create conversation is in progress, this holds the session state:
+#   name, description, graph_id, graph_model, provider, model_id,
+#   system_prompt, messages, total_in, total_out.
+# While non-None, dev-mode free-text turns feed the builder instead of the
+# editor. Cleared when the builder emits JSON or the user /cancels.
+pending_create: dict | None = None
+
 # Debug store for last LLM call
 last_debug: dict = {}
 

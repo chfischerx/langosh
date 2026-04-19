@@ -183,6 +183,21 @@ class DevMode(_GitMixin, Mode):
         state.console.print("[bold cyan]Graphs mode.[/bold cyan] Work with local graphs.")
         state.console.print("[dim]Type /help for commands, /back to return.[/dim]")
 
+    def handle_free_text(self, text: str) -> None:
+        # While a /create conversation is in progress, route free text to the
+        # builder instead of showing the default "/help" hint.
+        if state.pending_create is not None:
+            from ..graphs.builder import continue_create
+            try:
+                continue_create(text)
+            except KeyboardInterrupt:
+                state.console.print("\n[yellow]Interrupted.[/yellow]")
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return
+        # Otherwise fall back to the default "Type /help" hint from Mode.
+        super().handle_free_text(text)
+
     @command("list", "List all graphs from the current repo")
     def cmd_list(self, parts):
         from ..graphs import registry
@@ -195,16 +210,26 @@ class DevMode(_GitMixin, Mode):
             state.console.print(f"  {i}. [cyan]{gid}[/cyan] — {mod}")
         return "continue"
 
-    @command("fetchtools", "Refresh the tool catalog from curated LangChain builtins")
+    @command("fetchtools", "Refresh the tool catalog from LangChain community + experimental")
     def cmd_fetchtools(self, parts):
         from .main import _do_fetchtools
         _do_fetchtools()
         return "continue"
 
+    @command("cancel", "Cancel the in-progress builder conversation")
+    def cmd_cancel(self, parts):
+        if state.pending_create is None:
+            state.console.print("[dim]Nothing to cancel.[/dim]")
+            return "continue"
+        gid = state.pending_create.get("graph_id", "")
+        state.pending_create = None
+        state.console.print(f"[yellow]Cancelled create for '{gid}'.[/yellow]")
+        return "continue"
+
     @command("create", "Create a new graph with LLM guidance")
     def cmd_create(self, parts):
         import questionary
-        from ..graphs.builder import create_agent
+        from ..graphs.builder import builder_turn, start_create
 
         state.console.print("[bold]Create a new graph[/bold]\n")
 
@@ -282,13 +307,10 @@ class DevMode(_GitMixin, Mode):
 
         from ..worker import run_in_background
 
-        def _work():
-            summary = create_agent(
-                name.strip(), description.strip(), instructions.strip(), graph_model=graph_model,
-            )
-            state.console.print(f"\n[green]{summary}[/green]")
-
-        run_in_background("Generating graph definition...", _work)
+        start_create(
+            name.strip(), description.strip(), instructions.strip(), graph_model=graph_model,
+        )
+        run_in_background("Builder is thinking...", builder_turn)
         return "continue"
 
     @command("select", "Select an existing graph to work with")
@@ -352,6 +374,16 @@ class DevGraphMode(_GitMixin, Mode):
         state.agent_editing = False
 
     def handle_free_text(self, text: str) -> None:
+        if state.pending_create is not None:
+            from ..graphs.builder import continue_create
+            try:
+                continue_create(text)
+            except KeyboardInterrupt:
+                state.console.print("\n[yellow]Interrupted.[/yellow]")
+            except Exception as e:
+                state.console.print(f"[bold red]Error:[/bold red] {e}")
+            return
+
         from ..graphs.editor import send_edit_query
         try:
             send_edit_query(text)

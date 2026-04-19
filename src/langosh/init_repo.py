@@ -15,11 +15,11 @@ _LANGGRAPH_JSON = """\
 """
 
 
-_PYPROJECT_TOML = """\
+_PYPROJECT_TOML_TEMPLATE = """\
 [project]
-name = "agents"
+name = "{name}"
 version = "0.1.0"
-description = "LangGraph agents (Langosh-compatible)."
+description = "{description}"
 requires-python = ">=3.11"
 dependencies = [
   "langgraph>=1.0",
@@ -37,16 +37,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["graphs"]
-"""
-
-
-_MCP_JSON = """\
-{
-  "builtins": [
-    "wikipedia",
-    "ddg_search"
-  ]
-}
 """
 
 
@@ -74,46 +64,28 @@ A LangGraph agents repository, scaffolded by the [Langosh CLI](../langosh-cli).
 - `graphs/` — one subdirectory per graph. Each graph has a `definition.json`
   (authored by Langosh via the LLM) and an auto-generated `__init__.py`
   (produced by Langosh's compiler via `/compile` or `/deploy`).
-- `mcp.json` — tool catalog: which LangChain community builtins to
-  expose to the graph. All tools are resolved at build time by the
-  Langosh CLI; the server runs no tool-discovery code.
 - `pyproject.toml` — Python package metadata and dependencies.
 
 ## Next steps
 
 1. Run `langosh` in this directory.
-2. Run `/fetchtools` to populate the tool catalog from `mcp.json`.
-3. Use `/graphs /create` to generate your first graph with LLM guidance.
-4. Iterate with `/select` + free-text edits.
-5. `/compile` to emit the runnable Python module.
-6. `/deploy` to push the repo and hot-reload the server.
+2. Use `/graphs /create` to generate your first graph with LLM guidance.
+3. Iterate with `/select` + free-text edits.
+4. `/compile` to emit the runnable Python module.
+5. `/deploy` to push the repo and hot-reload the server.
 
-## Adding tools
+## Tool catalog
 
-Edit `mcp.json` → `builtins` to pick from Langosh's curated LangChain
-community tools (e.g. `wikipedia`, `ddg_search`, `python_repl`, `arxiv`,
-`requests_get`, `tavily_search`, `bash_shell`, `read_file`, `write_file`,
-`list_dir`, `sql_query`).
-
-After editing, run `/fetchtools` in Langosh to refresh the catalog. The
-CLI resolves every tool at compile time — the deployed graph has no
-runtime tool-discovery code.
+Langosh resolves every tool at build time by introspecting
+`langchain_community.tools` and `langchain_experimental.tools`. The
+deployed graph has no runtime tool-discovery code. Run `/fetchtools` in
+Langosh at any time to refresh the cached catalog.
 
 See the [Langosh README](../langosh-cli/README.md) for the full workflow.
 """
 
 
 _GRAPHS_INIT = ""  # empty module marker
-
-
-_FILES: dict[str, str] = {
-    "langgraph.json": _LANGGRAPH_JSON,
-    "pyproject.toml": _PYPROJECT_TOML,
-    ".gitignore": _GITIGNORE,
-    "README.md": _README,
-    "mcp.json": _MCP_JSON,
-    "graphs/__init__.py": _GRAPHS_INIT,
-}
 
 
 def _is_effectively_empty(path: Path) -> bool:
@@ -124,7 +96,11 @@ def _is_effectively_empty(path: Path) -> bool:
     return True
 
 
-def init_repo(cwd: Path) -> None:
+def _escape_toml(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def init_repo(cwd: Path, name: str, description: str) -> None:
     """Scaffold a minimal langgraph-agents repo in `cwd`."""
     if not cwd.is_dir():
         raise RuntimeError(f"Not a directory: {cwd}")
@@ -135,8 +111,20 @@ def init_repo(cwd: Path) -> None:
             "Run /initrepo in an empty directory."
         )
 
+    pyproject = _PYPROJECT_TOML_TEMPLATE.format(
+        name=_escape_toml(name),
+        description=_escape_toml(description),
+    )
+    files: dict[str, str] = {
+        "langgraph.json": _LANGGRAPH_JSON,
+        "pyproject.toml": pyproject,
+        ".gitignore": _GITIGNORE,
+        "README.md": _README,
+        "graphs/__init__.py": _GRAPHS_INIT,
+    }
+
     written: list[str] = []
-    for rel_path, content in _FILES.items():
+    for rel_path, content in files.items():
         target = cwd / rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)

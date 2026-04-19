@@ -45,26 +45,23 @@ def _extract_functions(definition: dict) -> list[dict]:
     return functions
 
 
-def create_agent(
+def start_create(
     name: str,
     description: str,
     instructions: str,
     graph_model: str | None = None,
-) -> str:
-    """Create a new graph from user-provided name, description, and instructions.
-
-    Steps: LLM produces JSON → we extract function bodies → write the generated
-    Python module under <agents_path>/graphs/<id>/ → register in langgraph.json.
+) -> None:
+    """Seed `state.pending_create` with the builder conversation context.
 
     `graph_model` is the model the GENERATED graph will call at runtime
     (independent of the CLI's active model used to build the JSON). Format:
     `"provider:model-id"`. If omitted, the generated module will read
     `DEFAULT_MODEL` from the server's environment at runtime.
 
-    Returns a human-readable summary string.
+    Does NOT make the LLM call — the caller is expected to start one via
+    `run_in_background("...", builder_turn)` so the input widget stays live.
     """
     from ..config import DEFAULT_MODELS, get_settings
-    from ..llm import call_llm_simple
     from ..llm.prompts.builder import builder_system_prompt
 
     settings = get_settings()
@@ -73,35 +70,112 @@ def create_agent(
 
     graph_id = _name_to_id(name)
 
-    user_prompt = (
+    model_line = (
+        f"Runtime model: already chosen by the user — {graph_model!r}. "
+        "Do NOT ask the user about the model."
+    ) if graph_model else (
+        "Runtime model: already chosen by the user — the server's "
+        "DEFAULT_MODEL env var controls it. Do NOT ask the user about the "
+        "model, and do NOT set a `model` field in the definition."
+    )
+
+    seed = (
         f"Create an agent with the following specifications:\n\n"
         f"Name: {name}\n"
         f"Description: {description}\n\n"
         f"Build instructions:\n{instructions}\n\n"
-        f"Output the complete agent definition in a ```json code block."
+        f"{model_line}\n\n"
+        f"BEFORE emitting any ```json block, scan the build instructions for "
+        f"tool categories mentioned without a specific tool name — e.g. "
+        f"\"web search\", \"send email\", \"query a database\", \"post to "
+        f"Slack\", \"read files\". For each such category:\n"
+        f"  - Look up the matching tools in the catalog (with their source "
+        f"tag + any API-key requirement).\n"
+        f"  - Ask the user which one to use, offering a concrete default "
+        f"(prefer no-API-key options).\n"
+        f"Also ask about any topology ambiguity (simple ReAct vs custom "
+        f"multi-node pipeline) when it isn't obvious from the ask.\n\n"
+        f"Only after the user answers (or says \"use defaults\") do you "
+        f"emit the definition. If there genuinely is nothing to clarify "
+        f"(e.g. the user named every tool + topology explicitly), you may "
+        f"proceed directly."
     )
 
-    state.console.print(f"[dim]Building graph '{name}' ({graph_id})...[/dim]")
+    state.pending_create = {
+        "name": name,
+        "description": description,
+        "graph_id": graph_id,
+        "graph_model": graph_model,
+        "provider": provider,
+        "model_id": model_id,
+        "system_prompt": builder_system_prompt(),
+        "messages": [{"role": "user", "content": seed}],
+        "total_in": 0,
+        "total_out": 0,
+    }
+    state.console.print(
+        f"[dim]Building graph '{name}' ({graph_id})... "
+        "(builder may ask clarifying questions; /cancel to abort)[/dim]"
+    )
+
+
+def builder_turn() -> None:
+    """Run one turn of the builder conversation. Must be called from a worker
+    thread (i.e. via `run_in_background`) so the REPL input widget stays live
+    while the LLM responds.
+
+    Appends the LLM reply to `state.pending_create["messages"]`. If the reply
+    contains a ```json definition, finalizes the graph and clears
+    `state.pending_create`. Otherwise prints the reply; the next user input
+    will become the next user turn."""
+    from ..llm import call_llm_simple
+    from ..rendering import print_renderables, render_semantic
+
+    pc = state.pending_create
+    if pc is None:
+        return
 
     result = asyncio.run(
         call_llm_simple(
-            provider=provider,
-            model_id=model_id,
+            provider=pc["provider"],
+            model_id=pc["model_id"],
             api_key=None,
-            system=builder_system_prompt(),
-            messages=[{"role": "user", "content": user_prompt}],
+            system=pc["system_prompt"],
+            messages=pc["messages"],
         )
     )
+    pc["total_in"] += result.get("input_tokens", 0)
+    pc["total_out"] += result.get("output_tokens", 0)
+    reply = result["text"]
+    pc["messages"].append({"role": "assistant", "content": reply})
 
-    definition = _extract_json_block(result["text"])
-    if not definition:
-        state.console.print("[bold red]Error:[/bold red] Could not parse agent definition from LLM response.")
-        state.console.print("[dim]Raw response:[/dim]")
-        state.console.print(result["text"][:2000])
-        return "Agent creation failed — no valid JSON definition found."
+    definition = _extract_json_block(reply)
+    if definition is None:
+        print_renderables(state.console, render_semantic(reply))
+        state.console.print(
+            "[dim]Reply below to continue, or /cancel to abort.[/dim]"
+        )
+        return
 
-    # Honor an explicit per-graph runtime model; clear the LLM's own choice
-    # if the user opted for server-env-driven resolution.
+    _finalize_create(definition, pc)
+
+
+def continue_create(text: str) -> None:
+    """Append a user reply to the builder conversation and run the next turn.
+    Must be called from a worker thread (via `run_in_background`)."""
+    pc = state.pending_create
+    if pc is None:
+        return
+    pc["messages"].append({"role": "user", "content": text})
+    builder_turn()
+
+
+def _finalize_create(definition: dict, pc: dict) -> None:
+    """Write the generated module, register it, print the summary, and clear
+    pending state."""
+    graph_id = pc["graph_id"]
+    graph_model = pc["graph_model"]
+
     if graph_model:
         definition["model"] = graph_model
     else:
@@ -113,7 +187,9 @@ def create_agent(
         init_path = codegen.write_compiled_graph(graph_id, definition, functions)
     except (ValueError, NotImplementedError) as e:
         state.console.print(f"[bold red]Codegen error:[/bold red] {e}")
-        return "Agent creation failed during codegen."
+        state.console.print("[yellow]Agent creation failed during codegen.[/yellow]")
+        state.pending_create = None
+        return
 
     registry.add_graph(graph_id)
     state.active_graph_id = graph_id
@@ -126,7 +202,8 @@ def create_agent(
         summary += f"  Tools: {', '.join(definition['tools'])}\n"
     if functions:
         summary += f"  Functions: {', '.join(f['name'] for f in functions)}\n"
-    summary += f"  Tokens: {result['input_tokens']} ↑ / {result['output_tokens']} ↓\n"
+    summary += f"  Tokens: {pc['total_in']} ↑ / {pc['total_out']} ↓\n"
     summary += "  [dim]Restart langosh-server to register the new graph.[/dim]"
 
-    return summary
+    state.pending_create = None
+    state.console.print(f"\n[green]{summary}[/green]")

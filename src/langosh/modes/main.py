@@ -20,15 +20,38 @@ class MainMode(Mode):
     def cmd_initrepo(self, parts):
         import os
         from pathlib import Path
+        import questionary
         import langosh.state as state
         from ..init_repo import init_repo
+
+        cwd = Path(os.getcwd())
+        default_name = cwd.name.replace(" ", "-").lower() or "agents"
+
+        name = questionary.text(
+            "Project name:",
+            default=default_name,
+            validate=lambda t: True if t.strip() else "Name cannot be empty",
+        ).ask()
+        if not name:
+            state.console.print("[dim]Cancelled.[/dim]")
+            return "continue"
+
+        description = questionary.text(
+            "Description:",
+            default="LangGraph agents (Langosh-compatible).",
+            validate=lambda t: True if t.strip() else "Description cannot be empty",
+        ).ask()
+        if not description:
+            state.console.print("[dim]Cancelled.[/dim]")
+            return "continue"
+
         try:
-            init_repo(Path(os.getcwd()))
+            init_repo(cwd, name=name.strip(), description=description.strip())
         except Exception as e:
             state.console.print(f"[bold red]Error:[/bold red] {e}")
         return "continue"
 
-    @command("fetchtools", "Refresh the tool catalog from curated LangChain builtins")
+    @command("fetchtools", "Refresh the tool catalog from LangChain community + experimental")
     def cmd_fetchtools(self, parts):
         _do_fetchtools()
         return "continue"
@@ -88,8 +111,8 @@ class MainMode(Mode):
 
 def _do_fetchtools() -> None:
     """Shared /fetchtools implementation. Introspects LangChain community +
-    experimental tool packages, merges with the curated registry, writes the
-    per-agents-repo cache, prints a summary."""
+    experimental tool packages, writes the per-agents-repo cache, prints
+    a summary."""
     import langosh.state as state
     from ..graphs.tool_fetcher import fetch_catalog
     try:
@@ -104,7 +127,4 @@ def _do_fetchtools() -> None:
         state.console.print(
             f"  [cyan]{source}[/cyan]  [dim]{len(names)} tools[/dim]"
         )
-    state.console.print(
-        f"[bold]Total:[/bold] {summary['total']} tools "
-        f"[dim](curated: {summary['curated']}, discovered: {summary['discovered']})[/dim]"
-    )
+    state.console.print(f"[bold]Total:[/bold] {summary['total']} tools")

@@ -153,32 +153,25 @@ roles. Node types:
 - **`type: "function"`** — arbitrary async Python. Escape hatch for logic
   that doesn't fit the other types.
 
-### Tool discovery: curated LangChain tools, build-time only
+### Tool discovery: LangChain community, build-time only
 
 Langosh never asks the LLM to *guess* which tools exist — it tells it
-exactly what's available, sourced from one place: a curated registry of
-popular LangChain community tools (Wikipedia, DuckDuckGo, Tavily,
-Python REPL, arXiv, PubMed, StackExchange, YouTube, HTTP requests,
-shell, file-management, …). All resolution happens at build time inside
-the Langosh CLI. The deployed graph has **no runtime tool-discovery code**
-— no MCP client, no network call at module import, no surprises at boot.
+exactly what's available. At `/fetchtools` time, the CLI introspects
+`langchain_community.tools` and `langchain_experimental.tools` for every
+`BaseTool` subclass whose constructor matches a supported pattern
+(zero-arg or `api_wrapper=XxxAPIWrapper()`). A small override table in
+`tool_discovery.py` adds the few tools whose ctor needs special args
+(e.g. `RequestsGetTool` with `allow_dangerous_requests=True`).
 
-The agents-repo root carries a tiny `mcp.json` selecting which builtins
-to expose:
+All resolution happens at build time inside the Langosh CLI. The
+deployed graph has **no runtime tool-discovery code** — no MCP client,
+no network call at module import, no surprises at boot.
 
-```json
-{
-  "builtins": ["wikipedia", "ddg_search", "tavily_search", "python_repl"]
-}
-```
-
-Omit `builtins` (or the file entirely) to default to the full registry.
-
-Run `/fetchtools` in Langosh to resolve the list and cache the catalog
-in `~/.langosh/tools_cache/<hash>.json`. The builder LLM reads from the
+Run `/fetchtools` in Langosh to refresh the catalog at
+`~/.langosh/tools_cache/<hash>.json`. The builder LLM reads from the
 cache: tool name, description, parameters, and source tag
-(`builtin:wikipedia`). No hallucinated tool names, no invented
-parameters.
+(`community:ddg_search.tool`, `experimental:python.tool`, …). No
+hallucinated tool names, no invented parameters.
 
 Every tool is usable the same way in a graph — as a `type: "tool"` node
 for deterministic calls, or inside an `llm` node's `"tools": [...]` list
@@ -188,12 +181,12 @@ statically and populates a single `_tools_by_name` dict at module load.
 ### How the catalog flows
 
 ```
-mcp.json (builtins)  +  Langosh curated registry
+langchain_community.tools + langchain_experimental.tools  (+ overrides)
                 │
                 v  /fetchtools
-          builtin registry lookup
+          discovered catalog
                 │
-                v  catalog
+                v
 ~/.langosh/tools_cache/<hash>.json
                 │
                 ├─> Builder prompt  (tool signatures + parameters)
@@ -213,10 +206,10 @@ The compiler (`src/langosh/graphs/codegen.py`) does:
    or edges pointing to non-existent nodes all surface as clear errors
    before any code is generated.
 2. **Tool resolution** — for every tool referenced in `tool` nodes and
-   `llm.tools` lists, looks it up in the manifest, gets its module path,
-   and emits a correct `from langosh_agents.tools.<module> import <fn>`
-   line. Unknown tools raise `ValueError` with the tool name — no silent
-   runtime `ImportError` at server boot.
+   `llm.tools` lists, looks it up in the cached catalog and emits the
+   matching `from langchain_community.tools... import ...` line plus a
+   static constructor expression. Unknown tools raise `ValueError` with
+   the tool name — no silent runtime `ImportError` at server boot.
 3. **State class generation** — the `state` dict becomes a `TypedDict` (or
    `MessagesState` subclass if `"messages"` is present) with the declared
    field types, including reducers for list/dict fields.
@@ -258,8 +251,8 @@ compiled module that matches the JSON you just approved.
 ## Requirements
 
 - Python 3.11+
-- A running [langosh-server](../langosh-server) instance (optional — only needed for exec mode)
-- The [langosh-agents](../langosh-agents) repo (sibling directory, optional — only needed for dev mode)
+- A running LangGraph-compatible server instance (optional — only needed for exec mode)
+- An agents repo in the current working directory (create one with `/initrepo`)
 
 ## Installation
 
@@ -346,7 +339,7 @@ Available in every mode:
 | `/server` | Server management |
 | `/settings` | CLI settings |
 | `/initrepo` | Scaffold a minimal langgraph-agents repo in the current directory |
-| `/fetchtools` | Refresh the tool catalog from the curated LangChain builtins |
+| `/fetchtools` | Refresh the tool catalog by introspecting LangChain community + experimental packages |
 | `/version` | Show the application version |
 
 ### Graphs (`graphs`)
@@ -358,7 +351,7 @@ Requires the CLI to be started within a langgraph code repository.
 | `/list` | List all graphs from the current repo |
 | `/select` | Select an existing graph to work with |
 | `/create` | Create a new graph (LLM-generated) |
-| `/fetchtools` | Refresh the tool catalog from the curated LangChain builtins |
+| `/fetchtools` | Refresh the tool catalog by introspecting LangChain community + experimental packages |
 | `/deploy` | Commit, push, and reload agents on the server |
 | `/status` | Show git status |
 | `/commit` | Commit all changes |
@@ -660,11 +653,13 @@ src/langosh/
     codegen.py               # /compile — definition.json -> __init__.py
     editor.py                # multi-turn LLM edit loop
     editor_tools.py          # tools for the editor LLM
-    tool_catalog.py          # loads tool manifest from langosh-agents
+    tool_catalog.py          # loads the cached tool catalog
+    tool_discovery.py        # introspects langchain_community.tools
+    tool_fetcher.py          # /fetchtools — discovery + cache
     registry.py              # langgraph.json read/write
 
   server/
-    server_client.py         # HTTP client for langosh-server / LangGraph Platform
+    server_client.py         # HTTP client for LangGraph Platform / compatible servers
 ```
 
 ## License

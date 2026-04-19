@@ -1,12 +1,12 @@
 """Generate deployable Python graph modules from JSON agent definitions.
 
-The langosh CLI authors/edits the canonical `definition.json` (LLM-friendly,
+The Langosh CLI authors/edits the canonical `definition.json` (LLM-friendly,
 structured). This module turns that definition into a Python module under
-`langosh-agents/graphs/<id>/__init__.py` that exports a compiled `graph`.
+`<agents-repo>/graphs/<id>/__init__.py` that exports a compiled `graph`.
 
-Both langosh-server (loads at boot via `langgraph.json`) and the langosh CLI
-(`/test`, `/graph`) treat the generated module as the source of truth for what
-runs.
+Both the server (loads at boot via `langgraph.json`) and the Langosh CLI
+(`/test`, `/graph`) treat the generated module as the source of truth for
+what runs.
 """
 
 from __future__ import annotations
@@ -758,20 +758,22 @@ def write_compiled_graph(graph_id: str, definition: dict, functions: list[dict])
 
     Returns the path to the generated `__init__.py`.
     """
+    # Generate source first — if this raises (e.g. unknown tool), we leave
+    # the filesystem untouched rather than leaving behind half-written files.
+    source = compile_to_source(definition, functions, graph_id)
+
     folder = graph_dir(graph_id)
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "definition.json").write_text(
         json.dumps(definition, indent=2, ensure_ascii=False) + "\n"
     )
 
-    # Custom function files (used by "function" node type).
     if functions:
         funcs_dir = folder / "functions"
         funcs_dir.mkdir(exist_ok=True)
         for fn in functions:
             (funcs_dir / f"{fn['name']}.py").write_text(fn["code"])
 
-    source = compile_to_source(definition, functions, graph_id)
     init_path = folder / "__init__.py"
     init_path.write_text(source)
     (folder / ".compile_hash").write_text(_hash_inputs(definition, functions))
