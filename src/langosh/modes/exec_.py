@@ -475,7 +475,11 @@ class ExecGraphMode(_ThreadCommandsMixin, Mode):
         else:
             choices = []
             for a in assistants:
-                name = a.get("name", "unnamed")
+                # LangGraph Platform auto-creates a default assistant per
+                # graph whose name == graph_id. Re-label it as "default"
+                # so the picker doesn't just parrot the graph_id back.
+                raw_name = a.get("name", "unnamed")
+                name = "default" if raw_name == self.graph_id else raw_name
                 aid = a["assistant_id"][:8]
                 ctx = a.get("context") or a.get("config", {}).get("configurable", {})
                 ctx_str = ", ".join(f"{k}={v}" for k, v in ctx.items()) if ctx else "default"
@@ -485,9 +489,11 @@ class ExecGraphMode(_ThreadCommandsMixin, Mode):
             if assistant is None:
                 return "continue"
 
+        raw_name = assistant.get("name", self.graph_id)
+        display_name = "default" if raw_name == self.graph_id else raw_name
         self._stack.push(
             ExecAssistantMode(self.server_name, self.graph_id, assistant["assistant_id"],
-                              assistant.get("name", self.graph_id))
+                              display_name)
         )
         return "continue"
 
