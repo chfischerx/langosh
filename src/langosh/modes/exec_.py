@@ -150,17 +150,23 @@ def _deploy_work() -> None:
     else:
         state.console.print("[dim]No uncommitted changes.[/dim]")
 
-    push = subprocess.run(
-        ["git", "push"], cwd=agents_path, capture_output=True, text=True,
+    remotes = subprocess.run(
+        ["git", "remote"], cwd=agents_path, capture_output=True, text=True,
     )
-    if push.returncode == 0:
-        out = push.stderr.strip() or push.stdout.strip()
-        if "Everything up-to-date" in out:
-            state.console.print("[dim]Already up to date with remote.[/dim]")
-        else:
-            state.console.print("[green]Pushed.[/green]")
+    if not remotes.stdout.strip():
+        state.console.print("[dim]No git remote configured — skipping push.[/dim]")
     else:
-        state.console.print(f"[yellow]Push failed:[/yellow] [dim]{push.stderr.strip()}[/dim]")
+        push = subprocess.run(
+            ["git", "push"], cwd=agents_path, capture_output=True, text=True,
+        )
+        if push.returncode == 0:
+            out = push.stderr.strip() or push.stdout.strip()
+            if "Everything up-to-date" in out:
+                state.console.print("[dim]Already up to date with remote.[/dim]")
+            else:
+                state.console.print("[green]Pushed.[/green]")
+        else:
+            state.console.print(f"[yellow]Push failed:[/yellow] [dim]{push.stderr.strip()}[/dim]")
 
     if is_langosh_server():
         try:
