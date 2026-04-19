@@ -178,8 +178,8 @@ def register(app: typer.Typer) -> None:
         from ..config import DEFAULT_MODELS, get_settings
         from ..llm import call_llm_simple
         from ..llm.prompts.chat import CHAT_SYSTEM_PROMPT
-        from ..rendering import print_renderables, render_semantic
         from ..queries import format_elapsed
+        from ..rendering import print_renderables, render_semantic
 
         settings = get_settings()
         provider = provider or state.active_model["provider"] or settings.default_provider

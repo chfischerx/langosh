@@ -11,7 +11,6 @@ from typing import Callable
 
 import langosh.state as state
 
-
 # ── @command decorator ──────────────────────────────────────────────
 
 

@@ -33,8 +33,24 @@ build-backend = "hatchling.build"
 packages = ["src/langosh"]
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
+# N806: local variables that carry type-like names (e.g. SystemMessage,
+#   ContextSchema constructors assigned in functions) are idiomatic here.
+# F541: f-strings without placeholders are cheap and keep the f-prefix
+#   consistent across neighbouring log lines — not worth policing.
+ignore = ["N806", "F541"]
+
+[tool.ruff.lint.per-file-ignores]
+# LLM-facing prose / tool descriptions routinely exceed 120 chars; line
+# breaks inside them hurt readability without making anything safer.
+"src/langosh/llm/prompts/*.py" = ["E501"]
+"src/langosh/graphs/editor_tools.py" = ["E501"]
+"src/langosh/graphs/tool_discovery.py" = ["E501"]
+"src/langosh/llm/tools/*.py" = ["E501"]
+"src/langosh/commands/*.py" = ["E501"]
+"src/langosh/context.py" = ["E501"]
+"src/langosh/modes/exec_.py" = ["E501"]

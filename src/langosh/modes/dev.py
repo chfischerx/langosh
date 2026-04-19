@@ -142,6 +142,7 @@ class _GitMixin:
     @command("commit", "Commit all changes")
     def cmd_commit(self, parts):
         import subprocess
+
         import questionary
 
         message = parts[1].strip() if len(parts) > 1 else None
@@ -229,6 +230,7 @@ class DevMode(_GitMixin, Mode):
     @command("create", "Create a new graph with LLM guidance")
     def cmd_create(self, parts):
         import questionary
+
         from ..graphs.builder import builder_turn, start_create
 
         state.console.print("[bold]Create a new graph[/bold]\n")
@@ -279,6 +281,7 @@ class DevMode(_GitMixin, Mode):
     @command("select", "Select an existing graph to work with")
     def cmd_select(self, parts):
         import questionary
+
         from ..graphs import registry
 
         graph_id = parts[1].strip() if len(parts) > 1 else None
@@ -396,6 +399,7 @@ class DevGraphMode(_GitMixin, Mode):
     @command("compile", "Compile the selected graph")
     def cmd_compile(self, parts):
         import json as _json
+
         from ..graphs import codegen, registry
 
         folder = registry.graph_dir(self.graph_id)
@@ -435,7 +439,9 @@ class DevGraphMode(_GitMixin, Mode):
     def cmd_delete(self, parts):
         import shutil
         import subprocess
+
         import questionary
+
         from ..graphs import registry
         from ..settings import get_agents_path
 
@@ -485,6 +491,7 @@ class DevGraphMode(_GitMixin, Mode):
     @command("preview", "Visualize the selected graph")
     def cmd_preview(self, parts):
         import json as _json
+
         from ..graphs import registry
 
         folder = registry.graph_dir(self.graph_id)

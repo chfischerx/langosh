@@ -3,7 +3,6 @@
 import asyncio
 import glob as glob_mod
 import os
-import re
 import subprocess
 
 _SENSITIVE_PATTERNS = {".env", "credentials", "secret", "token", ".pem", ".key"}

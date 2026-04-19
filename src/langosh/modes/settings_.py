@@ -17,7 +17,8 @@ class SettingsMode(Mode):
 
     @command("show", "Show all settings")
     def cmd_show(self, parts):
-        from ..settings import get as get_setting, get_active_server_name, get_servers
+        from ..settings import get as get_setting
+        from ..settings import get_active_server_name, get_servers
 
         _SETTINGS_SCHEMA = [
             ("anthropic_api_key", "Anthropic API key", "", "str"),
@@ -57,7 +58,10 @@ class SettingsMode(Mode):
     @command("configure", "Update settings interactively")
     def cmd_configure(self, parts):
         import questionary
-        from ..settings import get as get_setting, set as set_setting, delete as del_setting
+
+        from ..settings import delete as del_setting
+        from ..settings import get as get_setting
+        from ..settings import set as set_setting
 
         _SETTINGS_SCHEMA = [
             ("anthropic_api_key", "Anthropic API key", "", "str"),

@@ -29,6 +29,7 @@ class _ServerCommandsMixin:
     @command("select", "Select a server")
     def cmd_select(self, parts):
         import questionary
+
         from ..settings import get_active_server_name, get_servers, set_active_server
 
         servers = get_servers()
@@ -59,6 +60,7 @@ class _ServerCommandsMixin:
     @command("add", "Add a server")
     def cmd_add(self, parts):
         import questionary
+
         from ..settings import add_server
 
         sname = questionary.text("Server name:").ask()
@@ -78,6 +80,7 @@ class _ServerCommandsMixin:
     @command("update", "Update a server")
     def cmd_update(self, parts):
         import questionary
+
         from ..settings import get_servers, update_server
 
         servers = get_servers()
@@ -108,6 +111,7 @@ class _ServerCommandsMixin:
     @command("delete", "Delete a server")
     def cmd_delete(self, parts):
         import questionary
+
         from ..settings import get_active_server_name, get_servers, remove_server
 
         servers = get_servers()
@@ -182,6 +186,7 @@ class SelectedServerMode(_ServerCommandsMixin, Mode):
     @command("info", "Server version, graphs, status")
     def cmd_info(self, parts):
         from rich.table import Table
+
         from ..server import server_client
 
         try:

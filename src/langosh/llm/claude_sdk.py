@@ -22,7 +22,6 @@ try:
         ClaudeAgentOptions,
         ResultMessage,
         StreamEvent,
-        TextBlock,
         ToolResultBlock,
         ToolUseBlock,
         UserMessage,

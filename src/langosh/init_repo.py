@@ -6,7 +6,6 @@ from pathlib import Path
 
 import langosh.state as state
 
-
 _LANGGRAPH_JSON = """\
 {
   "$schema": "https://langgra.ph/schema.json",

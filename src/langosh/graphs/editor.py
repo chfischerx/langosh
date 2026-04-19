@@ -7,12 +7,12 @@ import langosh.state as state
 
 from ..context import apply_window
 from ..input import model_display_name
-from ..rendering import print_renderables, render_semantic
-from . import codegen, registry
 from ..llm.tools.docs_tools import DISPATCH as _DOCS_DISPATCH
 from ..llm.tools.docs_tools import TOOLS as _DOCS_TOOLS
 from ..llm.tools.subagent_tools import DISPATCH as _SUBAGENT_DISPATCH
 from ..llm.tools.subagent_tools import TOOLS as _SUBAGENT_TOOLS
+from ..rendering import print_renderables, render_semantic
+from . import codegen, registry
 from .editor_tools import TOOLS as _EDITOR_TOOLS
 from .editor_tools import WRITE_TOOLS, make_editor_dispatch
 

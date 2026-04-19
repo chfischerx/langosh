@@ -49,6 +49,7 @@ class _ThreadCommandsMixin:
     @command("delthread", "Delete a thread")
     def cmd_delthread(self, parts):
         import questionary
+
         from ..server import server_client
 
         try:
@@ -88,6 +89,7 @@ class _ThreadCommandsMixin:
     @command("delallthreads", "Delete all threads")
     def cmd_delallthreads(self, parts):
         import questionary
+
         from ..server import server_client
 
         try:
@@ -126,6 +128,7 @@ def _deploy_work() -> None:
     branch via its own deploy integration. Runs in a worker thread."""
     import subprocess
     from datetime import datetime
+
     from ..settings import get_agents_path
 
     agents_path = str(get_agents_path())
@@ -275,6 +278,7 @@ def _execute_run(exec_mode: str, assistant_id: str, thread_id: str | None,
 def _stateless_test(graph_id: str, parts: list[str]) -> str:
     """Shared stateless test: ensure assistant, pick exec mode, prompt for message, run."""
     import questionary
+
     from ..server import server_client
 
     try:
@@ -308,8 +312,8 @@ def _stateless_test(graph_id: str, parts: list[str]) -> str:
 
     messages = [{"role": "user", "content": msg}]
 
-    from ..worker import run_in_background
     from ..input import model_display_name
+    from ..worker import run_in_background
     model = model_display_name() or "assistant"
     spinner_msg = f"Streaming {model}..." if exec_mode == "Stream output" else (
         f"Waiting for {model}..." if exec_mode == "Wait for output" else f"Submitting to {model}..."
@@ -321,6 +325,7 @@ def _stateless_test(graph_id: str, parts: list[str]) -> str:
 def _run_interactive(mode, parts, assistant_id: str, graph_id: str, *, metadata_filter: dict) -> str:
     """Shared /run flow: execution mode, thread selection, message, then execute."""
     import questionary
+
     from ..server import server_client
 
     # 1. Execution mode
@@ -406,8 +411,8 @@ def _run_interactive(mode, parts, assistant_id: str, graph_id: str, *, metadata_
     messages = [{"role": "user", "content": msg}]
 
     # 4. Dispatch execution to background worker (keeps prompt widget responsive)
-    from ..worker import run_in_background
     from ..input import model_display_name
+    from ..worker import run_in_background
     model = model_display_name() or "assistant"
     spinner_msg = f"Streaming {model}..." if exec_mode == "Stream output" else (
         f"Waiting for {model}..." if exec_mode == "Wait for output" else f"Submitting to {model}..."
@@ -434,6 +439,7 @@ class ExecMode(Mode):
     @command("list", "List all available graphs")
     def cmd_list(self, parts):
         from rich.table import Table
+
         from ..server import server_client
 
         try:
@@ -467,6 +473,7 @@ class ExecMode(Mode):
     @command("select", "Select a graph")
     def cmd_select(self, parts):
         import questionary
+
         from ..server import server_client
 
         graph_id = parts[1].strip() if len(parts) > 1 else None
@@ -512,6 +519,7 @@ class ExecGraphMode(_ThreadCommandsMixin, Mode):
     @command("select", "Select an assistant")
     def cmd_select(self, parts):
         import questionary
+
         from ..server import server_client
 
         try:
@@ -554,6 +562,7 @@ class ExecGraphMode(_ThreadCommandsMixin, Mode):
     @command("thread", "Select a thread")
     def cmd_thread(self, parts):
         import questionary
+
         from ..server import server_client
 
         meta_filter = {"graph_id": self.graph_id}
@@ -599,8 +608,11 @@ class ExecGraphMode(_ThreadCommandsMixin, Mode):
     @command("create", "Create a new assistant with custom context")
     def cmd_create(self, parts):
         import json as _json
+
         import questionary
-        from ..graphs import registry; from ..server import server_client
+
+        from ..graphs import registry
+        from ..server import server_client
 
         name = parts[1].strip() if len(parts) > 1 else None
         if not name:
@@ -685,8 +697,9 @@ class ExecGraphMode(_ThreadCommandsMixin, Mode):
 
     @command("show", "Display the graph")
     def cmd_show(self, parts):
-        from ..server import server_client
         from langchain_core.runnables.graph import Graph
+
+        from ..server import server_client
 
         try:
             assistant = asyncio.run(server_client.ensure_assistant(self.graph_id))
@@ -752,6 +765,7 @@ class ExecAssistantMode(_ThreadCommandsMixin, Mode):
     @command("thread", "Select a thread")
     def cmd_thread(self, parts):
         import questionary
+
         from ..server import server_client
 
         meta_filter = {"graph_id": self.graph_id, "assistant_id": self.assistant_id}
@@ -813,8 +827,11 @@ class ExecAssistantMode(_ThreadCommandsMixin, Mode):
     @command("update", "Update assistant context")
     def cmd_update(self, parts):
         import json as _json
+
         import questionary
-        from ..graphs import registry; from ..server import server_client
+
+        from ..graphs import registry
+        from ..server import server_client
 
         graph_dir = registry.graph_dir(self.graph_id)
         defn_path = graph_dir / "definition.json"
@@ -869,6 +886,7 @@ class ExecAssistantMode(_ThreadCommandsMixin, Mode):
     @command("delete", "Delete the assistant")
     def cmd_delete(self, parts):
         import questionary
+
         from ..server import server_client
 
         confirm = questionary.confirm(
@@ -889,6 +907,7 @@ class ExecAssistantMode(_ThreadCommandsMixin, Mode):
     @command("test", "Stateless run")
     def cmd_test(self, parts):
         import questionary
+
         from ..server import server_client
 
         stream_mode = _pick_stream_mode()
@@ -964,7 +983,6 @@ class ExecThreadMode(Mode):
 
     @command("state", "Show the thread state")
     def cmd_state(self, parts):
-        import json as _json
         from ..server import server_client
 
         try:
@@ -1018,6 +1036,7 @@ class ExecThreadMode(Mode):
     @command("delete", "Delete the thread")
     def cmd_delete(self, parts):
         import questionary
+
         from ..server import server_client
 
         confirm = questionary.confirm(f"Delete thread {self.thread_id[:8]}?", default=False).ask()
@@ -1062,6 +1081,7 @@ class ExecThreadMode(Mode):
     @command("select", "Select a run")
     def cmd_select(self, parts):
         import questionary
+
         from ..server import server_client
 
         try:

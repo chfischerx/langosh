@@ -1,6 +1,8 @@
 """Main REPL loop."""
 
 import asyncio
+import json
+import os
 import shlex
 import subprocess
 import sys
@@ -14,10 +16,6 @@ from .input import get_input, model_display_name, set_mode_stack
 from .modes import ModeStack
 from .modes.main import MainMode
 from .worker import run_in_background
-
-
-import json
-import os
 
 _MODELS_CACHE_PATH = os.path.join(os.path.expanduser("~"), ".langosh", "models_cache.json")
 

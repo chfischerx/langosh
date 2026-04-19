@@ -21,8 +21,11 @@ class MainMode(_GitMixin, Mode):
     def cmd_initrepo(self, parts):
         import os
         from pathlib import Path
+
         import questionary
+
         import langosh.state as state
+
         from ..init_repo import init_repo
 
         cwd = Path(os.getcwd())
@@ -75,6 +78,7 @@ class MainMode(_GitMixin, Mode):
     @command("exec", "Execute graphs and assistants")
     def cmd_exec(self, parts):
         import langosh.state as state
+
         from ..settings import get_active_server_name
 
         server_name = get_active_server_name()
@@ -100,7 +104,6 @@ class MainMode(_GitMixin, Mode):
 
     @command("server", "Server management")
     def cmd_server(self, parts):
-        import langosh.state as st
         from ..settings import get_active_server_name, get_servers
 
         active = get_active_server_name()
@@ -130,6 +133,7 @@ def _do_fetchtools() -> None:
     experimental tool packages, writes the per-agents-repo cache, prints
     a summary."""
     import langosh.state as state
+
     from ..graphs.tool_fetcher import fetch_catalog
     try:
         summary = fetch_catalog()

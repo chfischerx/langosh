@@ -12,7 +12,6 @@ them directly and has no runtime tool-discovery code.
 
 from ...graphs.tool_catalog import load_tool_catalog
 
-
 _PROMPT_TEMPLATE = """You are an expert LangGraph agent designer. You help users create AI agents by generating agent definition JSON.
 
 ## Conversation protocol: clarify first, act second

@@ -128,7 +128,7 @@ def builder_turn() -> None:
     contains a ```json definition, finalizes the graph and clears
     `state.pending_create`. Otherwise prints the reply; the next user input
     will become the next user turn."""
-    from ..input import model_display_name, set_processing
+    from ..input import set_processing
     from ..llm import call_with_tools
     from ..llm.tools.docs_tools import DISPATCH as _DOCS_DISPATCH
     from ..llm.tools.docs_tools import TOOLS as _DOCS_TOOLS
