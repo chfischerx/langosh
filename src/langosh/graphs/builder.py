@@ -154,16 +154,30 @@ def builder_turn() -> None:
         except Exception as e:
             return f"Error executing {name}: {e}"
 
-    token_count = {"n": 0}
+    stream = {"buf": "", "n": 0}
     base_msg = f"Calling {model_display_name() or pc['model_id']}"
+
+    def _preview(buf: str) -> str:
+        # Last ~60 chars, newlines collapsed, stripped of a bit of XML noise
+        # so the tail shows something readable while streaming.
+        tail = buf[-80:].replace("\n", " ").replace("\t", " ")
+        tail = " ".join(tail.split())
+        if len(tail) > 60:
+            tail = "…" + tail[-60:]
+        return tail
 
     async def _on_event(event_type: str, data: dict) -> None:
         name = data.get("name", "")
         if event_type == "token":
             chunk = data.get("text", "")
             if chunk:
-                token_count["n"] += len(chunk)
-                set_processing(f"{base_msg} ({token_count['n']} chars)")
+                stream["buf"] += chunk
+                stream["n"] += len(chunk)
+                preview = _preview(stream["buf"])
+                if preview:
+                    set_processing(f"{base_msg} · {preview}")
+                else:
+                    set_processing(f"{base_msg} ({stream['n']} chars)")
         elif event_type == "status":
             text = data.get("text", "").strip()
             if text:
@@ -171,6 +185,8 @@ def builder_turn() -> None:
         elif event_type == "tool_call":
             args_str = _format_tool_args(data.get("input", {}))
             state.console.print(f"[dim]  ↳ {name}([/dim][cyan]{args_str}[/cyan][dim])[/dim]")
+            # Reset the streaming tail so it doesn't drag in tool-arg text.
+            stream["buf"] = ""
         elif event_type == "tool_result":
             state.console.print(f"[dim]  ↳ {name} done[/dim]")
 
