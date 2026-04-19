@@ -110,12 +110,7 @@ def repl(app) -> None:
     # Restore saved model selection
     saved_model = get_setting("active_model")
     if saved_model and isinstance(saved_model, dict):
-        provider = saved_model.get("provider")
-        if provider == "aws_bedrock":
-            provider = "bedrock_converse"
-            from .settings import set as _set_setting
-            _set_setting("active_model", {"provider": provider, "model_id": saved_model.get("model_id")})
-        state.active_model["provider"] = provider
+        state.active_model["provider"] = saved_model.get("provider")
         state.active_model["model_id"] = saved_model.get("model_id")
 
     saved_sub_mode = get_setting("code_sub_mode")

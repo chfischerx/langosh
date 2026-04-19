@@ -125,8 +125,10 @@ class _ServerCommandsMixin:
 
         active = get_active_server_name()
         choices = [questionary.Choice(title="\u2190 Back", value=None)]
-        for sname in servers:
-            label = f"{sname} (active)" if sname == active else sname
+        for sname, spec in servers.items():
+            url = spec.get("url", "")
+            suffix = " (active)" if sname == active else ""
+            label = f"{sname} \u2014 {url}{suffix}"
             choices.append(questionary.Choice(title=label, value=sname))
 
         picked = questionary.select("Delete which server?", choices=choices).ask()

@@ -136,13 +136,14 @@ Agents can have multiple **assistants** — each sharing the same graph logic bu
 {{
   "context": {{
     "model_name": {{"type": "str", "default": "anthropic:claude-sonnet-4-5-20250929"}},
+    "model_provider": {{"type": "str", "default": ""}},
     "system_prompt": {{"type": "str", "default": "You are a helpful assistant."}},
     "max_search_results": {{"type": "int", "default": 5}}
   }}
 }}
 ```
 
-**Always include** `model_name` and `system_prompt` in context — they let assistants use different LLMs and have different personalities.
+**Always include** `model_name`, `model_provider`, and `system_prompt` in context — they let assistants use different LLMs, override the provider when the model ID itself contains colons (e.g. Bedrock inference profiles like `global.anthropic.claude-sonnet-4-5-20250929-v1:0` paired with `model_provider: "bedrock_converse"`), and have different personalities. Leave `model_provider` as `""` when `model_name` already carries a `provider:` prefix that `init_chat_model` can parse.
 
 **Include when relevant:** tool-specific settings (e.g., `max_search_results`), domain-specific values (`language`, `tone`, `output_format`), or any hardcoded value that might vary between assistants.
 
@@ -325,7 +326,7 @@ Prefer `edit_function` and `edit_definition` for small changes. Only use
 ## CRITICAL Rules:
 1. **Clarify first, act second.** If the user's instruction leaves tool choice, model, API keys, or graph topology ambiguous — ask a short numbered list of questions before emitting JSON or calling any editor tool. Skip only for fully-unambiguous edits. See "Conversation protocol" above.
 2. **Default to simple.** Use `type: "simple"` unless the task clearly requires multi-step workflows or conditional branching. Do not over-engineer.
-3. **Always include `context`** with at least `model_name` and `system_prompt` so the graph supports custom assistants.
+3. **Always include `context`** with at least `model_name`, `model_provider` (default `""`), and `system_prompt` so the graph supports custom assistants.
 4. EVERY node MUST have a `type` field.
 5. ALWAYS prefer `type: tool` and `type: llm` nodes over `type: function`.
 6. For `type: function` nodes, the "code" field must be a complete async Python function.

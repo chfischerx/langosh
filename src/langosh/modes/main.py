@@ -1,9 +1,10 @@
 """Root mode — entry point, mode switches only."""
 
 from . import Mode, command
+from .dev import _GitMixin
 
 
-class MainMode(Mode):
+class MainMode(_GitMixin, Mode):
 
     def path_label(self) -> str:
         import langosh.state as state
@@ -45,8 +46,23 @@ class MainMode(Mode):
             state.console.print("[dim]Cancelled.[/dim]")
             return "continue"
 
+        from ..model_picker import LANGCHAIN_EXCLUDE, pick_model
+        model = pick_model(
+            "Default model for the example graph:",
+            include_server_default=False,
+            exclude_providers=LANGCHAIN_EXCLUDE,
+        )
+        if not model:
+            state.console.print("[dim]Cancelled.[/dim]")
+            return "continue"
+
         try:
-            init_repo(cwd, name=name.strip(), description=description.strip())
+            init_repo(
+                cwd,
+                name=name.strip(),
+                description=description.strip(),
+                default_model=model.strip(),
+            )
         except Exception as e:
             state.console.print(f"[bold red]Error:[/bold red] {e}")
         return "continue"

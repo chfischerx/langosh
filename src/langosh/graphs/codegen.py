@@ -100,13 +100,41 @@ def _resolve_tool_imports(tool_names: list[str]) -> tuple[list[str], list[str]]:
     return preamble, tool_expressions
 
 
+_INIT_MODEL_HELPER = (
+    "def _init_model(name, provider):\n"
+    "    \"\"\"Resolve an LLM handle. `provider` wins over any prefix in\n"
+    "    `name` — pass '' to let init_chat_model parse name as\n"
+    "    `provider:model-id` (or infer).\"\"\"\n"
+    "    if provider:\n"
+    "        return init_chat_model(name, model_provider=provider)\n"
+    "    return init_chat_model(name)\n"
+)
+
+
 def _model_lines(pinned_model: str | None) -> tuple[str, str]:
-    """Return (extra_import, default_model_line) for the generated module."""
+    """Return (extra_import, default_model_block) for the generated module.
+
+    The block always exposes both DEFAULT_MODEL and DEFAULT_MODEL_PROVIDER.
+    DEFAULT_MODEL_PROVIDER defaults to '' (empty → infer from the model
+    string) but can be overridden via the env var — required when the
+    model ID itself contains colons (e.g. Bedrock inference profiles
+    like `global.anthropic.claude-sonnet-4-5-20250929-v1:0`)."""
+    provider_line = (
+        'DEFAULT_MODEL_PROVIDER = os.environ.get("DEFAULT_MODEL_PROVIDER", "")'
+    )
     if pinned_model:
-        return "", f"DEFAULT_MODEL = {pinned_model!r}"
+        # Pinned model was chosen by the user at /create time. It already
+        # carries a `provider:` prefix (our /create flow combines them),
+        # so leave DEFAULT_MODEL_PROVIDER empty — init_chat_model parses
+        # the prefix. The env var still works as an override.
+        return (
+            "import os\n",
+            f"DEFAULT_MODEL = {pinned_model!r}\n{provider_line}",
+        )
     return (
         "import os\n",
-        f'DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", {DEFAULT_MODEL!r})',
+        f'DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", {DEFAULT_MODEL!r})\n'
+        f"{provider_line}",
     )
 
 
@@ -196,7 +224,9 @@ def _compile_simple_source(definition: dict, graph_id: str) -> str:
 
         agent_fn = (
             f"async def agent(state: State, runtime: Runtime[ContextSchema]) -> dict:\n"
-            f"    model = init_chat_model(getattr(runtime.context, 'model_name', '') or DEFAULT_MODEL)\n"
+            f"    name = getattr(runtime.context, 'model_name', '') or DEFAULT_MODEL\n"
+            f"    provider = getattr(runtime.context, 'model_provider', '') or DEFAULT_MODEL_PROVIDER\n"
+            f"    model = _init_model(name, provider)\n"
             f"    bound = model.bind_tools({tools_arg})\n"
             f"    system = SystemMessage(content=getattr(runtime.context, 'system_prompt', '') or _DEFAULT_PROMPT)\n"
             f'    response = await bound.ainvoke([system] + state["messages"])\n'
@@ -204,12 +234,16 @@ def _compile_simple_source(definition: dict, graph_id: str) -> str:
         )
 
         builder_line = "_builder = StateGraph(State, context_schema=ContextSchema)\n"
-        default_model_line = f'DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", {DEFAULT_MODEL!r})'
+        default_model_line = (
+            f'DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", {DEFAULT_MODEL!r})\n'
+            'DEFAULT_MODEL_PROVIDER = os.environ.get("DEFAULT_MODEL_PROVIDER", "")'
+        )
 
         return (
             f"{header}\n"
             + "\n".join(import_lines) + "\n"
             + f"\n{default_model_line}\n"
+            + f"\n{_INIT_MODEL_HELPER}"
             + f"\n{ctx_src}\n"
             + f'_DEFAULT_PROMPT = """{safe_prompt}"""\n'
             + f"\n\n{state_class}\n"
@@ -229,7 +263,7 @@ def _compile_simple_source(definition: dict, graph_id: str) -> str:
 
         agent_fn = (
             f"async def agent(state: State) -> dict:\n"
-            f"    model = init_chat_model(DEFAULT_MODEL)\n"
+            f"    model = _init_model(DEFAULT_MODEL, DEFAULT_MODEL_PROVIDER)\n"
             f"    bound = model.bind_tools({tools_arg})\n"
             f"    system = SystemMessage(content=SYSTEM_PROMPT)\n"
             f'    response = await bound.ainvoke([system] + state["messages"])\n'
@@ -242,6 +276,7 @@ def _compile_simple_source(definition: dict, graph_id: str) -> str:
             f"{header}\n"
             + "\n".join(import_lines) + "\n"
             + f"\n{default_line}\n"
+            + f"\n{_INIT_MODEL_HELPER}"
             + f'SYSTEM_PROMPT = """{safe_prompt}"""\n'
             + f"\n\n{state_class}\n"
             + f"\n{agent_fn}\n"
@@ -455,9 +490,18 @@ def _emit_llm_node(node: dict, has_context: bool = False) -> tuple[str, str]:
     tool_names = node.get("tools", [])
 
     module_level = ""
-    # Context-aware nodes receive runtime for model/prompt resolution
+    # Context-aware nodes receive runtime for model/provider resolution.
+    # Non-context fall back to module-level DEFAULT_MODEL/_PROVIDER.
     sig_extra = ", runtime: Runtime[ContextSchema]" if has_context else ""
-    model_expr = "init_chat_model(getattr(runtime.context, 'model_name', '') or DEFAULT_MODEL)" if has_context else "init_chat_model(DEFAULT_MODEL)"
+    if has_context:
+        model_expr = (
+            "_init_model("
+            "getattr(runtime.context, 'model_name', '') or DEFAULT_MODEL, "
+            "getattr(runtime.context, 'model_provider', '') or DEFAULT_MODEL_PROVIDER"
+            ")"
+        )
+    else:
+        model_expr = "_init_model(DEFAULT_MODEL, DEFAULT_MODEL_PROVIDER)"
 
     if tool_names:
         # LLM node with tools → ReAct sub-agent
@@ -486,7 +530,7 @@ def _emit_llm_node(node: dict, has_context: bool = False) -> tuple[str, str]:
             agent_var = f"_{name}_agent"
             module_level = (
                 f'{agent_var} = create_react_agent(\n'
-                f'    model=DEFAULT_MODEL,\n'
+                f'    model=_init_model(DEFAULT_MODEL, DEFAULT_MODEL_PROVIDER),\n'
                 f'    tools={tools_arg},\n'
                 f'    prompt="""{safe_system}""",\n'
                 f')\n'
@@ -514,7 +558,6 @@ def _emit_llm_node(node: dict, has_context: bool = False) -> tuple[str, str]:
 
         lines = [
             f"async def _{name}(state: State{sig_extra}) -> dict:",
-            f"    from langchain.chat_models import init_chat_model",
             f"    llm = {model_expr}",
             f"    messages = []",
         ]
@@ -618,6 +661,8 @@ def _compile_custom_source(
         core_imports.append(
             "from langchain_core.messages import HumanMessage, SystemMessage"
         )
+    if has_plain_llm or has_react_agent:
+        core_imports.append("from langchain.chat_models import init_chat_model")
 
     # Node functions + module-level agents
     node_funcs: list[str] = []
@@ -698,6 +743,10 @@ def _compile_custom_source(
 
     # Default model (always emitted as fallback for getattr defaults)
     sections.append(default_line)
+
+    # _init_model helper — resolves provider-aware LLM handles.
+    if has_plain_llm or has_react_agent:
+        sections.append(_INIT_MODEL_HELPER.rstrip())
 
     # Context schema
     if ctx_src:

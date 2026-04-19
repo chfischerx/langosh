@@ -257,53 +257,16 @@ class DevMode(_GitMixin, Mode):
             state.console.print("[dim]Cancelled.[/dim]")
             return "continue"
 
-        cur_provider = state.active_model.get("provider") or ""
-        cur_model_id = state.active_model.get("model_id") or ""
-        cur_combined = f"{cur_provider}:{cur_model_id}" if cur_provider and cur_model_id else ""
-
-        choices = ["Use server DEFAULT_MODEL (recommended)"]
-        if cur_combined:
-            choices.append(f"Match CLI active model ({cur_combined})")
-        choices.append("Pick from model catalog")
-        choices.append("Enter manually (provider:model-id)")
-
-        model_choice = questionary.select("Runtime model for this graph:", choices=choices).ask()
-        if model_choice is None:
+        from ..model_picker import LANGCHAIN_EXCLUDE, pick_model
+        picked = pick_model(
+            "Runtime model for this graph:",
+            include_server_default=True,
+            exclude_providers=LANGCHAIN_EXCLUDE,
+        )
+        if picked is None:
             state.console.print("[dim]Cancelled.[/dim]")
             return "continue"
-
-        if model_choice.startswith("Use server"):
-            graph_model = None
-        elif model_choice.startswith("Match CLI"):
-            graph_model = cur_combined
-        elif model_choice.startswith("Pick from"):
-            if not state.model_list:
-                state.console.print(
-                    "[dim]No models cached yet. Run /fetchmodels first "
-                    "(or pick 'Enter manually').[/dim]"
-                )
-                return "continue"
-            catalog = sorted(f"{m.provider}:{m.id}" for m in state.model_list)
-            graph_model = questionary.autocomplete(
-                "Model (type to filter; Tab/arrow to complete):",
-                choices=catalog,
-                validate=lambda t: (
-                    True if t and ":" in t and t in catalog else "Pick one from the list"
-                ),
-            ).ask()
-            if graph_model is None:
-                state.console.print("[dim]Cancelled.[/dim]")
-                return "continue"
-            graph_model = graph_model.strip()
-        else:
-            graph_model = questionary.text(
-                "Model (format: provider:model-id, e.g. anthropic:claude-sonnet-4-5-20250929):",
-                validate=lambda t: True if ":" in t and t.strip() else "Expected provider:model-id",
-            ).ask()
-            if graph_model is None:
-                state.console.print("[dim]Cancelled.[/dim]")
-                return "continue"
-            graph_model = graph_model.strip()
+        graph_model = picked or None  # empty = "use server DEFAULT_MODEL"
 
         from ..worker import run_in_background
 
