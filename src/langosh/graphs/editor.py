@@ -147,7 +147,7 @@ def send_edit_query(text: str) -> None:
             _regenerate_module(graph_id)
             state.console.print(
                 f"[dim]  ↳ regenerated {registry.graph_dir(graph_id) / '__init__.py'} "
-                "(restart langosh-server to pick up changes)[/dim]"
+                "(/deploy to push the change)[/dim]"
             )
         except Exception as e:
             state.console.print(f"[bold red]Codegen failed:[/bold red] {e}")

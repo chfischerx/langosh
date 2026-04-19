@@ -145,7 +145,8 @@ A LangGraph agents repository, scaffolded by the [Langosh CLI](../langosh-cli).
    generate your own graph with LLM guidance.
 5. Iterate with `/select` + free-text edits.
 6. `/compile` to emit the runnable Python module.
-7. `/deploy` to push the repo and hot-reload the server.
+7. `/deploy` to commit + push the repo so LangGraph Platform /
+   LangSmith picks up the new code.
 
 ## Tool catalog
 

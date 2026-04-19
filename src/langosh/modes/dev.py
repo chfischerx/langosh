@@ -166,7 +166,7 @@ class _GitMixin:
             state.console.print(f"[green]{result.stdout.strip()}[/green]")
         return "continue"
 
-    @command("deploy", "Commit, push, and reload agents on the server")
+    @command("deploy", "Commit and push the agents repo to trigger a server deploy")
     def cmd_deploy(self, parts):
         from .exec_ import _deploy
         return _deploy()
@@ -404,7 +404,7 @@ class DevGraphMode(_GitMixin, Mode):
             state.console.print(
                 f"[yellow]No definition.json in {folder}.[/yellow]\n"
                 "[dim]This looks like a hand-written graph -- edit `__init__.py` "
-                "directly, then restart langosh-server.[/dim]"
+                "directly, then /deploy to push the change.[/dim]"
             )
             return "continue"
 
@@ -422,7 +422,7 @@ class DevGraphMode(_GitMixin, Mode):
 
         state.console.print(
             f"[green]Regenerated {init_path}[/green]\n"
-            "[dim]Restart langosh-server to apply.[/dim]"
+            "[dim]/deploy to push the change so the server picks it up.[/dim]"
         )
         return "continue"
 
@@ -475,7 +475,7 @@ class DevGraphMode(_GitMixin, Mode):
                     state.console.print(f"[yellow]Push failed:[/yellow] [dim]{push.stderr.strip()}[/dim]")
             else:
                 state.console.print(f"[dim]{result.stdout.strip() or result.stderr.strip()}[/dim]")
-            state.console.print("[dim]Restart langosh-server to drop the registered graph.[/dim]")
+            state.console.print("[dim]/deploy to propagate the removal to the server.[/dim]")
             # Pop back to dev mode since graph is deleted
             self._stack.pop()
         else:

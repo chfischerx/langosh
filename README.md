@@ -37,7 +37,8 @@ can spend your time building agents instead of reading about them.
 
 ## Contents
 
-- [Works with LangSmith — and with langosh-server](#works-with-langsmith--and-with-langosh-server)
+- [Works with LangGraph Platform / LangSmith](#works-with-langgraph-platform--langsmith)
+- [Testing an agents repo locally](#testing-an-agents-repo-locally)
 - [LLM-assisted graph development](#llm-assisted-graph-development)
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -51,50 +52,86 @@ can spend your time building agents instead of reading about them.
 - [Project structure](#project-structure)
 - [License](#license)
 
-## Works with LangSmith — and with langosh-server
+## Works with LangGraph Platform / LangSmith
 
-Langosh speaks the **LangGraph Platform API**. That means it works out of the
-box with **LangSmith** (LangChain's hosted platform): configure a LangSmith
-server URL and API key in `/server /add`, and you can browse graphs, create
-assistants, manage threads, make runs, and watch execution from the CLI,
-exactly as you would against any LangGraph Platform deployment.
-
-For self-hosting, Langosh ships with a companion project, **[langosh-server](../langosh-server)**,
-which re-implements the same LangGraph Platform API — so the CLI can't tell
-the difference between a LangSmith-hosted server and a local langosh-server.
-What langosh-server adds on top is a small set of **deployment endpoints**
-that make the create/test/run loop instant:
-
-- **Hot reload** (`POST /admin/reload`) — point the server at a git-backed
-  langgraph-agents repo; push a change, hit reload, and the new graph is live
-  without restarting.
-- **Admin + config endpoints** — inspect active graphs, manage API keys,
-  update server config from the CLI.
-- **No build step** — edit your graph JSON or functions, `/deploy` from the
-  CLI, and the server picks up the new code on the next run.
-
-The `langosh_server: true` flag on a server entry tells the CLI to expose the
-extra admin commands (`/reload`, `/config`, `/apikeys`). For LangSmith or any
-plain LangGraph Platform server, set it to `false` and Langosh will show only
-the standard Platform commands.
+Langosh speaks the **LangGraph Platform API**. Configure a server URL in
+`/server /add`, and you can browse graphs, create assistants, manage
+threads, kick off runs, and watch execution live — whether you're
+pointing at a LangSmith-hosted deployment or any compatible LangGraph
+Platform server (including a local `langgraph dev` instance).
 
 **End-to-end workflow:**
 
 ```
 $ langosh
-> /graphs             # dev mode: local langgraph-agents repo
+> /graphs             # dev mode: local agents repo
 > /create             # LLM generates definition.json + functions
 > /select new-graph   # iterate on the graph (plan/auto/edit)
 > "add retry logic"   # LLM edits the graph
-> /deploy             # git commit + push + hot reload on the server
+> /deploy             # git commit + push — the server picks up the new code
 > /back /back /exec   # switch to exec mode (on the server)
 > /select new-graph   # server now knows about the new graph
 > /test               # stateless test run
 > /run                # stateful run with a thread
 ```
 
-Same CLI, same commands — whether you're developing against your own
-Langosh Server or hitting a managed LangSmith deployment.
+`/deploy` commits any local changes and pushes to the repo's git remote;
+LangGraph Platform / LangSmith pick up the new code via their own deploy
+integration on the pushed branch. If the repo has no remote, the push is
+skipped — useful during local-only iteration with `langgraph dev`.
+
+## Testing an agents repo locally
+
+`langgraph-cli` is wired into the scaffold (`[dependency-groups] dev`).
+After `/initrepo` + `uv sync`, use one of the two commands LangGraph
+ships for local testing — both read the repo's `langgraph.json` and
+load any env vars declared via its `env` field. See the [LangSmith
+local dev docs](https://docs.langchain.com/langsmith/local-dev-testing)
+for the full reference.
+
+### `langgraph dev` — fast, in-process
+
+```bash
+uv run langgraph dev
+```
+
+- Default port: `2024`.
+- **Hot reload is on by default** — edit `definition.json`, run
+  `/compile` in Langosh (or save the generated `__init__.py`), and the
+  dev server picks up the change.
+- No Docker. State persists in local pickle files — good enough for
+  iterating on graph logic.
+- Open the Studio UI at
+  `https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024`
+  for a visual graph runner.
+
+Point Langosh at it once via `/server /add` (URL `http://localhost:2024`)
+and `/select` it — now `/exec` in Langosh hits the dev server for
+`/test`, `/run`, threads, and assistants.
+
+### `langgraph up --watch` — production-like, Dockerized
+
+```bash
+uv run langgraph up --watch
+```
+
+- Default port: `8123`.
+- Runs the **full Docker stack** — PostgreSQL + Redis + the server —
+  so threads, assistants, and long-running runs persist the same way
+  they will in production.
+- `--watch` enables hot reload (opt-in here, default-on in `dev`).
+- Requires Docker. Slower to boot than `dev`; use this right before
+  deploying to catch any Postgres-/Redis-specific issues.
+
+`uv run langgraph up --recreate` does a full rebuild — handy after
+bumping dependencies in `pyproject.toml`.
+
+### Env vars
+
+Both commands load `.env` (the path is declared in `langgraph.json`'s
+`env` field — the scaffold sets it to `./.env`). `/initrepo` pre-fills
+`LANGSMITH_PROJECT` and an empty `LANGSMITH_API_KEY`; add your LLM /
+tool keys there before launching.
 
 ## LLM-assisted graph development
 
@@ -305,9 +342,7 @@ main
 ├── chat                     Direct LLM conversation (LangChain docs Q&A)
 ├── code:[mode]              LLM with tool use (plan/auto/edit)
 ├── server                   Server management
-│   └── [server_name]        Selected server
-│       ├── config           Server configuration
-│       └── apikeys          API key management
+│   └── [server_name]        Selected server (info, CRUD)
 └── settings                 CLI settings
 ```
 
@@ -497,26 +532,6 @@ The current sub-mode is shown below the input line and can be cycled with
 | `/select` | Switch to a different server |
 | `/add` / `/update` / `/delete` | Server CRUD |
 | `/info` | Server version, graphs, status |
-| `/reload` | Hot-reload agent repo (Langosh Server only) |
-| `/config` | Show and edit server config (Langosh Server only) |
-| `/apikeys` | Show and edit API keys (Langosh Server only) |
-
-### Server > Config (`server:[name]:config`)
-
-| Command | Description |
-|---------|-------------|
-| `/show` | Show server configuration |
-| `/reset` | Reset entire server configuration |
-| `/configure` | Configure server config step by step |
-
-### Server > API Keys (`server:[name]:apikeys`)
-
-| Command | Description |
-|---------|-------------|
-| `/list` | List all API keys |
-| `/create` | Create an API key |
-| `/delete` | Delete an API key |
-| `/rotate` | Rotate an API key |
 
 ### Settings (`settings`)
 
@@ -530,15 +545,20 @@ Settings stored in `~/.langosh/settings.json`:
 ```json
 {
   "servers": {
-    "local": {"url": "http://localhost:8001", "api_key": null, "langosh_server": true},
-    "cloud": {"url": "https://cloud.langgraph.com", "api_key": "lgp-key", "langosh_server": false}
+    "dev": {"url": "http://localhost:2024"},
+    "up":  {"url": "http://localhost:8123"}
   },
-  "active_server": "local",
+  "active_server": "dev",
   "anthropic_api_key": "...",
   "default_provider": "anthropic",
   "max_tokens": 4096
 }
 ```
+
+Server entries carry just a URL — local `langgraph dev` / `langgraph up`
+don't need auth, so the CLI doesn't store or send a server-level API key.
+(LLM-provider keys — `anthropic_api_key`, `openai_api_key` — are still
+stored and used for the CLI's own `/chat` and `/code` modes.)
 
 ## LLM providers
 

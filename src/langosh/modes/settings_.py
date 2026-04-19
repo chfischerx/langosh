@@ -36,9 +36,8 @@ class SettingsMode(Mode):
         if servers:
             for sname, info in servers.items():
                 marker = "\u25cf" if sname == active else "\u25cb"
-                stype = "langosh" if info.get("langosh_server", True) else "langgraph"
                 state.console.print(
-                    f"    {marker} [cyan]{sname}[/cyan] -- {info.get('url', '')} [{stype}]"
+                    f"    {marker} [cyan]{sname}[/cyan] -- {info.get('url', '')}"
                 )
         else:
             state.console.print("    [dim]none configured[/dim]")

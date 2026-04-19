@@ -121,11 +121,12 @@ class _ThreadCommandsMixin:
 
 
 def _deploy_work() -> None:
-    """Perform git commit+push and server reload. Runs in worker thread."""
+    """Commit uncommitted changes and push to the configured git remote.
+    LangGraph Platform / LangSmith picks up new code from the pushed
+    branch via its own deploy integration. Runs in a worker thread."""
     import subprocess
     from datetime import datetime
-    from ..server import server_client
-    from ..settings import get_agents_path, is_langosh_server
+    from ..settings import get_agents_path
 
     agents_path = str(get_agents_path())
 
@@ -155,41 +156,19 @@ def _deploy_work() -> None:
     )
     if not remotes.stdout.strip():
         state.console.print("[dim]No git remote configured — skipping push.[/dim]")
-    else:
-        push = subprocess.run(
-            ["git", "push"], cwd=agents_path, capture_output=True, text=True,
-        )
-        if push.returncode == 0:
-            out = push.stderr.strip() or push.stdout.strip()
-            if "Everything up-to-date" in out:
-                state.console.print("[dim]Already up to date with remote.[/dim]")
-            else:
-                state.console.print("[green]Pushed.[/green]")
-        else:
-            state.console.print(f"[yellow]Push failed:[/yellow] [dim]{push.stderr.strip()}[/dim]")
+        return
 
-    if is_langosh_server():
-        try:
-            result = asyncio.run(server_client.reload_agents())
-            state.console.print("[green]Server reloaded.[/green]")
-            if isinstance(result, dict):
-                sha = result.get("sha", "")[:7]
-                prev = result.get("prev_sha", "")[:7]
-                if sha and prev:
-                    state.console.print(f"  [dim]{prev} \u2192 {sha}[/dim]")
-                commits = result.get("commits", [])
-                for c in commits:
-                    csha = c.get("sha", "")[:7]
-                    msg = c.get("message", "")
-                    author = c.get("author", "")
-                    state.console.print(f"  [cyan]{csha}[/cyan] {msg} [dim]({author})[/dim]")
-                graphs = result.get("graphs", [])
-                if graphs:
-                    state.console.print(f"  [dim]Graphs: {', '.join(graphs)}[/dim]")
-        except Exception as e:
-            state.console.print(f"[yellow]Reload failed:[/yellow] [dim]{e}[/dim]")
+    push = subprocess.run(
+        ["git", "push"], cwd=agents_path, capture_output=True, text=True,
+    )
+    if push.returncode == 0:
+        out = push.stderr.strip() or push.stdout.strip()
+        if "Everything up-to-date" in out:
+            state.console.print("[dim]Already up to date with remote.[/dim]")
+        else:
+            state.console.print("[green]Pushed.[/green]")
     else:
-        state.console.print("[dim]Skipping reload (not a langosh server).[/dim]")
+        state.console.print(f"[yellow]Push failed:[/yellow] [dim]{push.stderr.strip()}[/dim]")
 
 
 def _deploy() -> str:
@@ -457,7 +436,7 @@ class ExecMode(Mode):
         self._stack.push(ExecGraphMode(self.server_name, graph_id))
         return "continue"
 
-    @command("deploy", "Commit, push, and reload agents on the server")
+    @command("deploy", "Commit and push the agents repo to trigger a server deploy")
     def cmd_deploy(self, parts):
         return _deploy()
 
