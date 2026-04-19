@@ -187,12 +187,47 @@ async def _default_on_event(event_type, data):
     elif event_type == "tool_result":
         preview = data.get("preview", "")[:80]
         state.console.print(f"[dim]  \u21b3 done ({preview})[/dim]")
+    elif event_type == "chunk":
+        # Non-default stream_mode — server emits whatever that mode
+        # produces; dump one line per part.
+        import json as _json
+        ev = data.get("event", "?")
+        raw = data.get("data")
+        try:
+            payload = _json.dumps(raw, ensure_ascii=False, default=str)
+        except Exception:
+            payload = str(raw)
+        if len(payload) > 400:
+            payload = payload[:400] + "\u2026"
+        state.console.print(f"[dim]  \u21b3 {ev}:[/dim] {payload}")
     elif event_type == "error":
         state.console.print(f"\n[bold red]Error:[/bold red] {data.get('message', '')}")
 
 
+# LangGraph Platform stream_mode values, ordered by expected usefulness.
+_STREAM_MODES = [
+    ("messages-tuple", "token + tool stream (default, rich events)"),
+    ("values", "full state snapshot after each step"),
+    ("updates", "per-step state delta"),
+    ("messages", "message stream without tuple wrapper"),
+    ("events", "LangChain v2 event stream"),
+    ("custom", "user-emitted writer() events from graph nodes"),
+    ("debug", "internal debug events"),
+]
+
+
+def _pick_stream_mode():
+    """Prompt the user to pick a stream_mode. Returns the value string
+    or None when cancelled."""
+    import questionary
+    choices = [questionary.Choice(title="\u2190 Back", value=None)]
+    for value, hint in _STREAM_MODES:
+        choices.append(questionary.Choice(title=f"{value}  \u2014  {hint}", value=value))
+    return questionary.select("Stream mode:", choices=choices).ask()
+
+
 def _execute_run(exec_mode: str, assistant_id: str, thread_id: str | None,
-                 messages: list[dict]) -> None:
+                 messages: list[dict], stream_mode: str = "messages-tuple") -> None:
     """Execute the run in the chosen mode. Called from a worker thread."""
     from ..server import server_client
 
@@ -201,31 +236,40 @@ def _execute_run(exec_mode: str, assistant_id: str, thread_id: str | None,
             server_client.stream_run(
                 assistant_id=assistant_id, thread_id=thread_id,
                 messages=messages, on_event=_default_on_event,
+                stream_mode=stream_mode,
             )
         )
         rid = result.get("run_id", "?")[:8]
-        state.console.print(f"\n[dim]run {rid}[/dim]")
+        state.console.print(f"\n[dim]run {rid} (stream_mode={stream_mode})[/dim]")
 
     elif exec_mode == "Wait for output":
         result = asyncio.run(
             server_client.wait_run(
                 assistant_id=assistant_id, thread_id=thread_id,
                 messages=messages,
+                stream_mode=stream_mode if stream_mode != "messages-tuple" else None,
             )
         )
         text = result.get("text", "")
-        state.console.print(f"\n{text}")
+        if text:
+            state.console.print(f"\n{text}")
+        else:
+            import json as _json
+            raw = result.get("output")
+            dump = _json.dumps(raw, indent=2, ensure_ascii=False, default=str)
+            state.console.print(f"\n[dim](no message text extracted; raw output below)[/dim]\n{dump}")
 
     elif exec_mode == "Background":
         result = asyncio.run(
             server_client.background_run(
                 assistant_id=assistant_id, thread_id=thread_id,
                 messages=messages,
+                stream_mode=stream_mode if stream_mode != "messages-tuple" else None,
             )
         )
         run_id = result.get("run_id", "?")[:8]
         run_status = result.get("status", "?")
-        state.console.print(f"[green]Run submitted.[/green] [dim]run {run_id} ({run_status})[/dim]")
+        state.console.print(f"[green]Run submitted.[/green] [dim]run {run_id} ({run_status}, stream_mode={stream_mode})[/dim]")
 
 
 def _stateless_test(graph_id: str, parts: list[str]) -> str:
@@ -249,6 +293,11 @@ def _stateless_test(graph_id: str, parts: list[str]) -> str:
         state.console.print("[dim]Cancelled.[/dim]")
         return "continue"
 
+    stream_mode = _pick_stream_mode()
+    if stream_mode is None:
+        state.console.print("[dim]Cancelled.[/dim]")
+        return "continue"
+
     rest = parts[1].strip() if len(parts) > 1 else ""
     if not rest:
         rest = questionary.text("Test message:").ask()
@@ -265,7 +314,7 @@ def _stateless_test(graph_id: str, parts: list[str]) -> str:
     spinner_msg = f"Streaming {model}..." if exec_mode == "Stream output" else (
         f"Waiting for {model}..." if exec_mode == "Wait for output" else f"Submitting to {model}..."
     )
-    run_in_background(spinner_msg, _execute_run, exec_mode, aid, None, messages)
+    run_in_background(spinner_msg, _execute_run, exec_mode, aid, None, messages, stream_mode)
     return "continue"
 
 
@@ -280,6 +329,11 @@ def _run_interactive(mode, parts, assistant_id: str, graph_id: str, *, metadata_
         choices=["Stream output", "Wait for output", "Background"],
     ).ask()
     if exec_mode is None:
+        state.console.print("[dim]Cancelled.[/dim]")
+        return "continue"
+
+    stream_mode = _pick_stream_mode()
+    if stream_mode is None:
         state.console.print("[dim]Cancelled.[/dim]")
         return "continue"
 
@@ -358,7 +412,7 @@ def _run_interactive(mode, parts, assistant_id: str, graph_id: str, *, metadata_
     spinner_msg = f"Streaming {model}..." if exec_mode == "Stream output" else (
         f"Waiting for {model}..." if exec_mode == "Wait for output" else f"Submitting to {model}..."
     )
-    run_in_background(spinner_msg, _execute_run, exec_mode, assistant_id, tid, messages)
+    run_in_background(spinner_msg, _execute_run, exec_mode, assistant_id, tid, messages, stream_mode)
     return "continue"
 
 
@@ -837,6 +891,11 @@ class ExecAssistantMode(_ThreadCommandsMixin, Mode):
         import questionary
         from ..server import server_client
 
+        stream_mode = _pick_stream_mode()
+        if stream_mode is None:
+            state.console.print("[dim]Cancelled.[/dim]")
+            return "continue"
+
         rest = parts[1].strip() if len(parts) > 1 else ""
         if not rest:
             rest = questionary.text("Test message:").ask()
@@ -845,25 +904,15 @@ class ExecAssistantMode(_ThreadCommandsMixin, Mode):
                 return "continue"
         msg = rest.strip()
 
-        async def _on_event(event_type, data):
-            if event_type == "token":
-                state.console.print(data.get("text", ""), end="", soft_wrap=True, highlight=False)
-            elif event_type == "tool_call":
-                state.console.print(f"\n[dim]  \u21b3 calling {data.get('name', '?')}...[/dim]")
-            elif event_type == "tool_result":
-                preview = data.get("preview", "")[:80]
-                state.console.print(f"[dim]  \u21b3 done ({preview})[/dim]")
-            elif event_type == "error":
-                state.console.print(f"\n[bold red]Error:[/bold red] {data.get('message', '')}")
-
-        state.console.print(f"\n[dim]Stateless run...[/dim]\n")
+        state.console.print(f"\n[dim]Stateless run (stream_mode={stream_mode})...[/dim]\n")
         try:
             asyncio.run(
                 server_client.stream_run(
                     assistant_id=self.assistant_id,
                     thread_id=None,
                     messages=[{"role": "user", "content": msg}],
-                    on_event=_on_event,
+                    on_event=_default_on_event,
+                    stream_mode=stream_mode,
                 )
             )
         except KeyboardInterrupt:

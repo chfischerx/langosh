@@ -180,24 +180,33 @@ async def stream_run(
     *,
     context: dict | None = None,
     on_event: StreamEventCallback | None = None,
+    stream_mode: str = "messages-tuple",
 ) -> dict:
     """Stream a run; emit incremental events; return the final text + run_id.
 
+    `stream_mode` is passed through to the server. The rich token /
+    tool-call / tool-result parsing only runs when it equals
+    `"messages-tuple"` (the default). For any other mode we emit a
+    generic `("chunk", {"event": ..., "data": ...})` event per part
+    and leave display to the caller.
+
     `on_event` callbacks:
       - ("run_start",  {"run_id": "..."}):           run accepted by the server
-      - ("token",      {"text": "..."}):             streaming assistant text chunk
-      - ("tool_call",  {"name": "...", "input": {}}):tool invoked by the model
-      - ("tool_result",{"name": "...", "preview": "..."}): tool finished
+      - ("token",      {"text": "..."}):             streaming assistant text chunk (messages-tuple only)
+      - ("tool_call",  {"name": "...", "input": {}}):tool invoked (messages-tuple only)
+      - ("tool_result",{"name": "...", "preview": "..."}): tool finished (messages-tuple only)
+      - ("chunk",      {"event": "...", "data": ...}): raw server part (non-default modes)
       - ("error",      {"message": "..."}):          server-side error
     Returns {"text": <full assistant text>, "run_id": <str>}.
     """
     client = _client()
     text_chunks: list[str] = []
     run_id = ""
+    rich_parse = stream_mode == "messages-tuple"
 
     stream_kwargs: dict[str, Any] = {
         "input": {"messages": messages},
-        "stream_mode": "messages-tuple",
+        "stream_mode": stream_mode,
     }
     if context:
         stream_kwargs["context"] = context
@@ -210,8 +219,18 @@ async def stream_run(
             run_id = data.get("run_id", "") or run_id
             if on_event:
                 await on_event("run_start", {"run_id": run_id})
+            continue
 
-        elif event in ("messages", "messages/partial") and isinstance(data, (list, tuple)) and data:
+        if not rich_parse:
+            # Non-default modes get a single passthrough event per part.
+            if on_event and event and event != "metadata":
+                await on_event("chunk", {"event": event, "data": data})
+            if event == "error" and isinstance(data, dict):
+                msg = data.get("message") or data.get("error") or "Unknown error"
+                raise RuntimeError(f"Server run failed: {msg}")
+            continue
+
+        if event in ("messages", "messages/partial") and isinstance(data, (list, tuple)) and data:
             # Data format: ["messages", [chunk_dict, metadata_dict]]
             # or just [chunk_dict, metadata_dict] depending on server version
             payload = data
@@ -278,11 +297,16 @@ async def wait_run(
     messages: list[dict],
     *,
     context: dict | None = None,
+    stream_mode: str | None = None,
 ) -> dict:
     """Non-streaming run; block until complete; return final output.
 
     Works with a thread (conversational) or thread_id=None (stateless).
-    Returns {"text": <assistant text>}.
+    `stream_mode`, when set, is passed through to the wait endpoint —
+    the server uses it to decide which output format to return
+    (`values`, `updates`, `messages-tuple`, …). When unset the server
+    defaults (typically `values`).
+    Returns {"text": <assistant text>, "output": <raw final payload>}.
     """
     client = _client(timeout=120.0)
     kwargs: dict[str, Any] = {
@@ -290,6 +314,8 @@ async def wait_run(
     }
     if context:
         kwargs["context"] = context
+    if stream_mode:
+        kwargs["stream_mode"] = stream_mode
 
     result = await client.runs.wait(thread_id, assistant_id, **kwargs)
 
@@ -311,21 +337,30 @@ async def wait_run(
                     )
                 break
 
-    return {"text": text}
+    return {"text": text, "output": result}
 
 
 async def background_run(
     assistant_id: str,
-    thread_id: str,
+    thread_id: str | None,
     messages: list[dict],
     *,
     context: dict | None = None,
+    stream_mode: str | None = None,
 ) -> dict:
-    """Fire-and-forget run. Returns the Run object immediately."""
+    """Fire-and-forget run. Returns the Run object immediately.
+
+    Pass `thread_id=None` for a stateless run (routes to `POST /runs`
+    instead of `POST /threads/{id}/runs`). `stream_mode`, when set,
+    is stored on the run so a future rejoin-stream call respects the
+    requested format.
+    """
     client = _client()
     kwargs: dict[str, Any] = {"input": {"messages": messages}}
     if context:
         kwargs["context"] = context
+    if stream_mode:
+        kwargs["stream_mode"] = stream_mode
     result = await client.runs.create(thread_id, assistant_id, **kwargs)
     return result
 
