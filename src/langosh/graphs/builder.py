@@ -128,20 +128,64 @@ def builder_turn() -> None:
     contains a ```json definition, finalizes the graph and clears
     `state.pending_create`. Otherwise prints the reply; the next user input
     will become the next user turn."""
-    from ..llm import call_llm_simple
+    from ..input import model_display_name, set_processing
+    from ..llm import call_with_tools
+    from ..llm.tools.docs_tools import DISPATCH as _DOCS_DISPATCH
+    from ..llm.tools.docs_tools import TOOLS as _DOCS_TOOLS
+    from ..llm.tools.subagent_tools import DISPATCH as _SUBAGENT_DISPATCH
+    from ..llm.tools.subagent_tools import TOOLS as _SUBAGENT_TOOLS
+    from ..llm.tools.subagent_tools import set_parent_on_event
+    from ..queries import _format_tool_args
     from ..rendering import print_renderables, render_semantic
 
     pc = state.pending_create
     if pc is None:
         return
 
+    tools = _DOCS_TOOLS + _SUBAGENT_TOOLS
+    dispatch = {**_DOCS_DISPATCH, **_SUBAGENT_DISPATCH}
+
+    async def _dispatch(name: str, args: dict) -> str:
+        fn = dispatch.get(name)
+        if not fn:
+            return f"Unknown tool: {name}"
+        try:
+            return await fn(args)
+        except Exception as e:
+            return f"Error executing {name}: {e}"
+
+    token_count = {"n": 0}
+    base_msg = f"Calling {model_display_name() or pc['model_id']}"
+
+    async def _on_event(event_type: str, data: dict) -> None:
+        name = data.get("name", "")
+        if event_type == "token":
+            chunk = data.get("text", "")
+            if chunk:
+                token_count["n"] += len(chunk)
+                set_processing(f"{base_msg} ({token_count['n']} chars)")
+        elif event_type == "status":
+            text = data.get("text", "").strip()
+            if text:
+                state.console.print(f"[dim italic]  • {text}[/dim italic]")
+        elif event_type == "tool_call":
+            args_str = _format_tool_args(data.get("input", {}))
+            state.console.print(f"[dim]  ↳ {name}([/dim][cyan]{args_str}[/cyan][dim])[/dim]")
+        elif event_type == "tool_result":
+            state.console.print(f"[dim]  ↳ {name} done[/dim]")
+
+    set_parent_on_event(_on_event)
+
     result = asyncio.run(
-        call_llm_simple(
+        call_with_tools(
             provider=pc["provider"],
             model_id=pc["model_id"],
             api_key=None,
             system=pc["system_prompt"],
             messages=pc["messages"],
+            tools=tools,
+            tool_dispatcher=_dispatch,
+            on_event=_on_event,
         )
     )
     pc["total_in"] += result.get("input_tokens", 0)
@@ -194,16 +238,68 @@ def _finalize_create(definition: dict, pc: dict) -> None:
     registry.add_graph(graph_id)
     state.active_graph_id = graph_id
 
-    summary = (
-        f"Graph [bold]{graph_id}[/bold] generated at {init_path}\n"
-        f"  Type: {definition.get('type', 'simple')}\n"
-    )
-    if definition.get("tools"):
-        summary += f"  Tools: {', '.join(definition['tools'])}\n"
+    # Build a rich summary of what was generated.
+    gtype = definition.get("type", "simple")
+    lines: list[str] = [
+        f"[green]✓ Graph [bold]{graph_id}[/bold] created.[/green]",
+        f"  [dim]Type:[/dim] {gtype}",
+        f"  [dim]Path:[/dim] {init_path}",
+    ]
+
+    # Tool references — from the top-level `tools` (simple agents) plus any
+    # referenced inside tool/llm nodes (custom agents).
+    tool_names: set[str] = set(definition.get("tools", []) or [])
+    for node in definition.get("nodes", []) or []:
+        if node.get("type") == "tool" and node.get("tool"):
+            tool_names.add(node["tool"])
+        if node.get("type") == "llm":
+            for t in node.get("tools", []) or []:
+                tool_names.add(t)
+    if tool_names:
+        lines.append(f"  [dim]Tools:[/dim] {', '.join(sorted(tool_names))}")
+
+    if gtype == "custom":
+        state_fields = list((definition.get("state") or {}).keys())
+        nodes = definition.get("nodes") or []
+        edges = definition.get("edges") or []
+        if state_fields:
+            lines.append(f"  [dim]State:[/dim] {', '.join(state_fields)}")
+        if nodes:
+            node_summary = ", ".join(f"{n.get('name','?')}({n.get('type','?')})" for n in nodes)
+            lines.append(f"  [dim]Nodes ({len(nodes)}):[/dim] {node_summary}")
+        if edges:
+            lines.append(f"  [dim]Edges:[/dim] {len(edges)}")
+
+    context = definition.get("context") or {}
+    if context:
+        lines.append(f"  [dim]Context:[/dim] {', '.join(context.keys())}")
+
     if functions:
-        summary += f"  Functions: {', '.join(f['name'] for f in functions)}\n"
-    summary += f"  Tokens: {pc['total_in']} ↑ / {pc['total_out']} ↓\n"
-    summary += "  [dim]Restart langosh-server to register the new graph.[/dim]"
+        lines.append(f"  [dim]Functions:[/dim] {', '.join(f['name'] for f in functions)}")
+
+    # API-key hints — if any selected tool is known to need one.
+    _API_KEY_HINTS = {
+        "tavily_search": "TAVILY_API_KEY",
+        "brave_search": "BRAVE_SEARCH_API_KEY",
+        "bing_search": "BING_SUBSCRIPTION_KEY",
+        "bing_search_results_json": "BING_SUBSCRIPTION_KEY",
+        "google_search": "GOOGLE_API_KEY + GOOGLE_CSE_ID",
+        "google_search_results_json": "GOOGLE_API_KEY + GOOGLE_CSE_ID",
+        "google_serper": "SERPER_API_KEY",
+        "google_serper_results_json": "SERPER_API_KEY",
+    }
+    keys_needed = sorted({v for n, v in _API_KEY_HINTS.items() if n in tool_names})
+    if keys_needed:
+        lines.append(f"  [yellow]Server env vars:[/yellow] {', '.join(keys_needed)}")
+
+    lines.append(f"  [dim]Tokens: {pc['total_in']} ↑ / {pc['total_out']} ↓[/dim]")
+    lines.append(
+        "  [dim]Next: /select "
+        + graph_id
+        + " to edit · /compile to rebuild · /deploy to push[/dim]"
+    )
 
     state.pending_create = None
-    state.console.print(f"\n[green]{summary}[/green]")
+    state.console.print("")
+    for line in lines:
+        state.console.print(line)
