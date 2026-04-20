@@ -77,10 +77,37 @@ def register(app: typer.Typer) -> None:
 
     @app.command()
     def model(
-        selection: str = typer.Argument(..., help="Model number from 'models' list, or provider:model_id"),
+        selection: str = typer.Argument(
+            None,
+            help="Model number from 'models' list, or provider:model_id. Omit for an interactive picker.",
+        ),
     ) -> None:
         """Select a model for subsequent LLM calls."""
         from ..settings import set as set_setting
+
+        # No arg → interactive type-to-filter picker (same UX used by
+        # /create and /initrepo). Matching name lookup is best-effort so
+        # the active-model display keeps the human-friendly name when
+        # the cached catalog has it.
+        if selection is None:
+            from ..model_picker import pick_model
+
+            picked = pick_model("Pick a model:", include_server_default=False)
+            if not picked or ":" not in picked:
+                return
+            prov, model_id = picked.split(":", 1)
+            state.active_model["provider"] = prov
+            state.active_model["model_id"] = model_id
+            set_setting("active_model", {"provider": prov, "model_id": model_id})
+            name = next(
+                (m.name for m in state.model_list if m.provider == prov and m.id == model_id),
+                None,
+            )
+            suffix = f" ({name})" if name else ""
+            state.console.print(
+                f"Active model: [bold]{prov}[/bold] / [cyan]{model_id}[/cyan]{suffix}"
+            )
+            return
 
         if selection.isdigit():
             source = state.last_results if state.last_results else state.model_list
@@ -103,7 +130,7 @@ def register(app: typer.Typer) -> None:
             state.console.print(f"Active model: [bold]{prov}[/bold] / [cyan]{model_id}[/cyan]")
             return
 
-        state.console.print("[bold red]Usage:[/bold red] /model <number> or /model <provider:model_id>")
+        state.console.print("[bold red]Usage:[/bold red] /model [<number> | <provider:model_id>]")
 
     @app.command()
     def search(
