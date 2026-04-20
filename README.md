@@ -1,5 +1,6 @@
 # Langosh
 
+[![Website](https://img.shields.io/badge/website-langosh.ai-7ee787?style=flat)](https://langosh.ai)
 [![PyPI version](https://img.shields.io/pypi/v/langosh.svg?color=7ee787&label=pypi)](https://pypi.org/project/langosh/)
 [![Python versions](https://img.shields.io/pypi/pyversions/langosh.svg?color=7ee787)](https://pypi.org/project/langosh/)
 [![License](https://img.shields.io/github/license/chfischerx/langosh.svg?color=7ee787)](https://github.com/chfischerx/langosh/blob/main/LICENSE)
@@ -7,6 +8,8 @@
 [![Publish](https://github.com/chfischerx/langosh/actions/workflows/publish.yml/badge.svg)](https://github.com/chfischerx/langosh/actions/workflows/publish.yml)
 [![Issues](https://img.shields.io/github/issues/chfischerx/langosh.svg?color=d2a8ff)](https://github.com/chfischerx/langosh/issues)
 [![GitHub stars](https://img.shields.io/github/stars/chfischerx/langosh.svg?color=d2a8ff&label=★)](https://github.com/chfischerx/langosh/stargazers)
+
+**Website:** [langosh.ai](https://langosh.ai) · **PyPI:** [pypi.org/project/langosh](https://pypi.org/project/langosh/) · **Docs:** [langgraph API coverage](docs/langgraph_api.md)
 
 A CLI for building and running LangGraph agents. You scaffold a repo, ask
 an LLM to write you a graph, test it locally with `langgraph dev`, and
