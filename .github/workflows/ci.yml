@@ -16,7 +16,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install ruff
-      - run: ruff check src/
+      - run: ruff check src/ tests/
 
   test:
     runs-on: ubuntu-latest
@@ -30,10 +30,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - name: Install package
-        run: pip install -e .
+      - name: Install package + test deps
+        run: |
+          pip install -e .
+          pip install pytest
       - name: Import smoke test
         run: |
           python -c "import langosh; import langosh.main; import langosh.graphs.codegen; import langosh.graphs.tool_discovery; print('OK')"
       - name: CLI smoke test
         run: langosh version
+      - name: Run pytest
+        run: pytest
