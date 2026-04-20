@@ -1,5 +1,7 @@
 """Settings mode — view and edit CLI-side settings."""
 
+import os
+
 import langosh.state as state
 
 from . import Mode, command
@@ -17,6 +19,7 @@ class SettingsMode(Mode):
 
     @command("show", "Show all settings")
     def cmd_show(self, parts):
+        from ..config import env_override_for
         from ..settings import get as get_setting
         from ..settings import get_active_server_name, get_servers
 
@@ -43,14 +46,21 @@ class SettingsMode(Mode):
         else:
             state.console.print("    [dim]none configured[/dim]")
 
-        # Show other settings
+        # Show other settings. An env-var override wins over settings.json
+        # at read time, so surface that so users aren't surprised when
+        # `/configure` writes a value and the effective setting doesn't
+        # change.
         state.console.print("\n  [bold]Settings[/bold]")
         for key, label, default, _ in _SETTINGS_SCHEMA:
-            val = get_setting(key)
-            if val is not None:
-                disp = str(val)
+            override = env_override_for(key)
+            if override:
+                disp = f"{os.environ[override]} [dim](from ${override})[/dim]"
             else:
-                disp = f"[default: {default}]" if default else "[not set]"
+                val = get_setting(key)
+                if val is not None:
+                    disp = str(val)
+                else:
+                    disp = f"[default: {default}]" if default else "[not set]"
             state.console.print(f"    {label:30} {disp}")
         state.console.print()
         return "continue"
