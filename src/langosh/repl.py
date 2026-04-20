@@ -12,7 +12,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 
 import langosh.state as state
 
-from .input import get_input, model_display_name, set_mode_stack
+from .input import expand_pastes, get_input, model_display_name, set_mode_stack
 from .modes import ModeStack
 from .modes.main import MainMode
 from .worker import run_in_background
@@ -159,8 +159,15 @@ def repl(app) -> None:
             if not line:
                 continue
 
-            # Echo the user input as clean history
+            # Echo the user input as clean history (with paste
+            # placeholders still collapsed so long pastes don't blow up
+            # scrollback).
             state.console.print(f"[dim]> {line}[/dim]")
+
+            # Expand `[Pasted #N, K lines]` placeholders to the
+            # original content before dispatching — commands, shell,
+            # and the LLM all need the real text.
+            line = expand_pastes(line)
 
             # --- Shell commands (any mode) ---
             if line.startswith("!"):

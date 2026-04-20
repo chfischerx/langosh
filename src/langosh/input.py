@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import TYPE_CHECKING
 
 from prompt_toolkit.application import Application
@@ -11,6 +12,7 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout.containers import ConditionalContainer, Float, FloatContainer, HSplit, Window
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
@@ -91,6 +93,42 @@ def get_mode_stack() -> "ModeStack | None":
     """Access the global mode stack. Used by background workers (e.g. the
     builder) that need to push a mode after an async task completes."""
     return _mode_stack
+
+
+# ── Bracketed-paste abbreviation ─────────────────────────────────────
+# Pastes longer than PASTE_ABBREV_THRESHOLD chars are replaced in the
+# buffer with a short placeholder like `[Pasted #1, 42 lines]` or
+# `[Pasted #1, 820 chars]`; the raw content is kept in the store below
+# and inlined again before `get_input()` returns, so downstream command
+# / LLM handlers see the full content while the widget and the
+# scrollback echo stay readable.
+PASTE_ABBREV_THRESHOLD = 500
+_paste_store: dict[str, str] = {}
+_paste_counter: int = 0
+_PLACEHOLDER_RE = re.compile(r"\[Pasted #\d+, \d+ (?:lines|chars)\]")
+
+
+def _stash_paste(content: str) -> str:
+    global _paste_counter
+    _paste_counter += 1
+    if "\n" in content:
+        label = f"{content.count(chr(10)) + 1} lines"
+    else:
+        label = f"{len(content)} chars"
+    token = f"[Pasted #{_paste_counter}, {label}]"
+    _paste_store[token] = content
+    return token
+
+
+def expand_pastes(text: str) -> str:
+    """Expand `[Pasted #N, K lines]` placeholders back to their full
+    stored content. Placeholders with no known backing content
+    (e.g. recalled from history in a later session) are left intact,
+    which is the safer default — the user sees exactly what they
+    recalled."""
+    if not _paste_store:
+        return text
+    return _PLACEHOLDER_RE.sub(lambda m: _paste_store.get(m.group(0), m.group(0)), text)
 
 
 _SPINNER_FRAMES = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"
@@ -211,6 +249,20 @@ def get_input() -> str | None:
         completer=completer,
         complete_while_typing=True,
     )
+
+    # Intercept `buf.insert_text` so ANY insertion over
+    # PASTE_ABBREV_THRESHOLD chars gets abbreviated — covers bracketed
+    # paste, clipboard yanks, and programmatic inserts. Keystroke-level
+    # typing inserts 1 char at a time, well under the threshold, so
+    # regular typing is unaffected.
+    _orig_insert_text = buf.insert_text
+
+    def _intercepted_insert(data, overwrite=False, move_cursor=True, fire_event=True):
+        if len(data) > PASTE_ABBREV_THRESHOLD:
+            data = _stash_paste(data.replace("\r\n", "\n"))
+        _orig_insert_text(data, overwrite=overwrite, move_cursor=move_cursor, fire_event=fire_event)
+
+    buf.insert_text = _intercepted_insert
 
     body = HSplit([
         ConditionalContainer(
@@ -335,6 +387,23 @@ def get_input() -> str | None:
     @kb.add("c-d")
     def _ctrl_d(event):
         event.app.exit(result=None)
+
+    @kb.add(Keys.BracketedPaste)
+    def _paste(event):
+        """Collapse long pastes to a placeholder token.
+
+        Pastes <= PASTE_ABBREV_THRESHOLD chars flow through unchanged.
+        Longer ones get stashed and the buffer gets a short
+        `[Pasted #N, K lines]` / `[Pasted #N, C chars]` marker — keeps
+        the input widget readable and the submitted-line echo short.
+        `expand_pastes()` restores the full content before commands /
+        LLM handlers see it.
+        """
+        data = event.data.replace("\r\n", "\n")
+        if len(data) > PASTE_ABBREV_THRESHOLD:
+            buf.insert_text(_stash_paste(data))
+        else:
+            buf.insert_text(data)
 
     prompt_app = Application(
         layout=layout,
