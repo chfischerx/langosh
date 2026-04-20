@@ -2,7 +2,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/langosh.svg?color=7ee787&label=pypi)](https://pypi.org/project/langosh/)
 [![Python versions](https://img.shields.io/pypi/pyversions/langosh.svg?color=7ee787)](https://pypi.org/project/langosh/)
-[![License](https://img.shields.io/github/license/chfischerx/langosh.svg?color=7ee787)](LICENSE)
+[![License](https://img.shields.io/github/license/chfischerx/langosh.svg?color=7ee787)](https://github.com/chfischerx/langosh/blob/main/LICENSE)
 [![CI](https://github.com/chfischerx/langosh/actions/workflows/ci.yml/badge.svg)](https://github.com/chfischerx/langosh/actions/workflows/ci.yml)
 [![Publish](https://github.com/chfischerx/langosh/actions/workflows/publish.yml/badge.svg)](https://github.com/chfischerx/langosh/actions/workflows/publish.yml)
 [![Issues](https://img.shields.io/github/issues/chfischerx/langosh.svg?color=d2a8ff)](https://github.com/chfischerx/langosh/issues)
@@ -56,31 +56,33 @@ A few things worth calling out:
 
 ## Works with LangGraph Platform / LangSmith
 
-Langosh speaks the **LangGraph Platform API**. Configure a server URL in
-`/server /add`, and you can browse graphs, create assistants, manage
-threads, kick off runs, and watch execution live — whether you're
-pointing at a LangSmith-hosted deployment or any compatible LangGraph
-Platform server (including a local `langgraph dev` instance).
+Langosh is primarily a **graph development tool** — scaffold a repo,
+author a `definition.json` with an LLM, compile to Python, iterate.
 
-**End-to-end workflow:**
+For **testing** the graphs you've just built, Langosh ships a small
+built-in LangGraph client (wrapping the
+[`langgraph-sdk`](https://pypi.org/project/langgraph-sdk/)) that talks
+to any LangGraph-Platform-compatible server: a local `langgraph dev` /
+`langgraph up` instance, or a LangSmith-hosted deployment. Point at
+one via `/server /add`; everything downstream (`/exec`, `/test`,
+`/run`) hits that server.
 
-```
-$ langosh
-> /graphs             # dev mode: local agents repo
-> /create             # LLM generates definition.json + functions
-> /select new-graph   # iterate on the graph (plan/auto/edit)
-> "add retry logic"   # LLM edits the graph
-> /deploy             # git commit + push — the server picks up the new code
-> /back /back /exec   # switch to exec mode (on the server)
-> /select new-graph   # server now knows about the new graph
-> /test               # stateless test run
-> /run                # stateful run with a thread
-```
+**The client is deliberately scoped.** Only the endpoints that are
+useful during graph development are implemented — enough to:
 
-`/deploy` commits any local changes and pushes to the repo's git remote;
-LangGraph Platform / LangSmith pick up the new code via their own deploy
-integration on the pushed branch. If the repo has no remote, the push is
-skipped — useful during local-only iteration with `langgraph dev`.
+- invoke a graph with different **assistant** contexts (models,
+  system prompts, per-run parameters);
+- **monitor runs** — stream tokens, watch tool calls, wait for
+  completion, inspect thread state and history;
+- **collect diagnostic information** from completed runs and feed it
+  back into the LLM editor so the builder can reason about what
+  actually happened.
+
+Operational surfaces (Store, Crons, MCP gateway, batch cancels,
+A2A, Prometheus metrics) are intentionally out of scope. See the
+[LangGraph API coverage document](https://github.com/chfischerx/langosh/blob/main/docs/langgraph_api.md)
+for the full endpoint-to-command map and the explicit list of
+omissions.
 
 ## Requirements
 

@@ -2,7 +2,34 @@
 name = "langosh"
 version = "0.1.1"
 description = "A CLI to create, test, and deploy LangGraph agents"
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Christian Fischer" },
+]
+keywords = [
+    "langgraph",
+    "langchain",
+    "langsmith",
+    "cli",
+    "agents",
+    "llm",
+    "ai",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "typer>=0.15",
     "rich>=13.0",
@@ -24,6 +51,13 @@ dependencies = [
 
 [project.scripts]
 langosh = "langosh.main:app"
+
+[project.urls]
+Homepage = "https://langosh.ai"
+Repository = "https://github.com/chfischerx/langosh"
+Documentation = "https://langosh.ai"
+Issues = "https://github.com/chfischerx/langosh/issues"
+Changelog = "https://github.com/chfischerx/langosh/releases"
 
 [build-system]
 requires = ["hatchling"]
