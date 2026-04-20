@@ -1,0 +1,48 @@
+name: Feature Request
+description: Suggest an improvement or new feature
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea to make Langosh better? Share it here.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What problem does this solve or what need does it address?
+      placeholder: Currently I can't... / It would be nice if... / Users often struggle with...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you like this to work?
+      placeholder: I'd like Langosh to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Are there other approaches or workarounds?
+      placeholder: Another option might be...
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: What does this affect?
+      options:
+        - label: CLI commands / modes
+        - label: LLM-assisted graph builder / editor
+        - label: Codegen (JSON → Python module)
+        - label: Tool discovery / catalog
+        - label: LangGraph Platform / LangSmith integration
+        - label: LLM provider support (Anthropic / OpenAI / Bedrock / Claude SDK)
+        - label: Scaffolding (/initrepo)
+        - label: Documentation
+        - label: Other

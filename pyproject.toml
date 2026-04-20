@@ -1,0 +1,56 @@
+[project]
+name = "langosh"
+version = "0.1.1"
+description = "A CLI to create, test, and deploy LangGraph agents"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.15",
+    "rich>=13.0",
+    "prompt-toolkit>=3.0",
+    "httpx>=0.27.0",
+    "questionary>=2.0",
+    "langgraph>=1.0",
+    "langchain>=1.0",
+    "langchain-anthropic>=1.0",
+    "langchain-community>=0.3",
+    "langchain-experimental>=0.3",
+    "langchain-mcp-adapters>=0.2",
+    "claude-agent-sdk>=0.1.0",
+    "anthropic>=0.28.0",
+    "openai>=1.40.0",
+    "grandalf>=0.8",
+    "boto3>=1.34.0",
+]
+
+[project.scripts]
+langosh = "langosh.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/langosh"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+# N806: local variables that carry type-like names (e.g. SystemMessage,
+#   ContextSchema constructors assigned in functions) are idiomatic here.
+# F541: f-strings without placeholders are cheap and keep the f-prefix
+#   consistent across neighbouring log lines — not worth policing.
+ignore = ["N806", "F541"]
+
+[tool.ruff.lint.per-file-ignores]
+# LLM-facing prose / tool descriptions routinely exceed 120 chars; line
+# breaks inside them hurt readability without making anything safer.
+"src/langosh/llm/prompts/*.py" = ["E501"]
+"src/langosh/graphs/editor_tools.py" = ["E501"]
+"src/langosh/graphs/tool_discovery.py" = ["E501"]
+"src/langosh/llm/tools/*.py" = ["E501"]
+"src/langosh/commands/*.py" = ["E501"]
+"src/langosh/context.py" = ["E501"]
+"src/langosh/modes/exec_.py" = ["E501"]

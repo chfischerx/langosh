@@ -1,0 +1,6 @@
+title: Langosh Documentation
+description: A CLI for building and running LangGraph agents.
+theme: jekyll-theme-cayman
+include:
+  - CNAME
+  - README.md
