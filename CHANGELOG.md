@@ -7,6 +7,58 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-04-20
+
+### Added
+
+- Landing-page favicon — SVG three-node graph on the site's dark
+  panel, with PNG fallbacks at 32×32, 180×180, and 512×512.
+- Screenshot of the `/create` flow embedded in the README under the
+  **LLM-assisted graph development** chapter (served via
+  `langosh.ai/assets/` so GitHub Pages fronts it).
+- `/model` with no argument now opens the interactive type-to-filter
+  picker already used by `/create` and `/initrepo`; `/model N` and
+  `/model provider:model-id` still work as before.
+- Paste abbreviation: pastes longer than 500 chars collapse to a
+  `[Pasted #N, K lines]` / `[Pasted #N, C chars]` placeholder in the
+  input widget and echo, and expand back to the full content before
+  commands / shell / LLM handlers see it.
+- Env-var overrides for every setting — `ANTHROPIC_API_KEY`,
+  `OPENAI_API_KEY`, `LANGOSH_*`, plus `AWS_BEDROCK_REGION` with
+  `AWS_REGION` fallback. Precedence is env > `settings.json` >
+  default; `/settings show` annotates env-overridden values.
+
+### Fixed
+
+- `/edit` no longer crashes with "Future attached to a different
+  loop" on terminals that don't respond to cursor-position requests.
+  Approval widgets spun up under `asyncio.to_thread` were leaving
+  pending CPR futures across event loops; Langosh now sets
+  `PROMPT_TOOLKIT_NO_CPR=1` at startup so the renderer skips the
+  probe entirely.
+- License badge on the GitHub repo page — swapped the dynamic
+  `shields.io/github/license/...` endpoint for a static MIT badge so
+  the stale Camo cache clears.
+
+### Changed
+
+- README restructure: short **LLM-assisted graph development**
+  summary after the ToC, full deep dive moved to **Under the hood**,
+  **Works with LangGraph Platform / LangSmith** renamed to **Test
+  and run on the LangGraph / LangSmith platform**, **LLM providers**
+  renamed to **Supported providers** with a proper
+  `default_provider` capabilities matrix, Testing chapter reframed
+  as **Testing Agents** (local or remote), dropped the stale
+  **Project structure** chapter, added a full env-var table
+  (Langosh + standard boto3 AWS vars).
+- `docs/index.html` — tool-module paths (`langchain_community.tools`
+  and `langchain_experimental.tools`) now link to
+  python.langchain.com integrations and the
+  `langchain-experimental` PyPI page instead of rendering as dead
+  inline code.
+
+## [0.1.2] — 2026-04-20
+
 ### Added
 
 - `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and a GitHub pull-request
@@ -17,6 +69,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   PRs, grouped by ecosystem (LangChain / provider SDKs).
 - `.github/CODEOWNERS` and `.editorconfig` — auto-request reviews
   from the maintainer; consistent indentation across editors.
+- Pytest suite (90 tests incl. 20 env-var precedence tests) wired
+  into CI.
 
 ### Changed
 
@@ -75,6 +129,8 @@ Initial public release.
 - **CI + publish** workflows (`ruff` lint, Python 3.11 / 3.12 /
   3.13 matrix, PyPI trusted publishing on tag).
 
-[Unreleased]: https://github.com/chfischerx/langosh/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/chfischerx/langosh/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/chfischerx/langosh/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/chfischerx/langosh/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/chfischerx/langosh/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/chfischerx/langosh/releases/tag/v0.1.0
