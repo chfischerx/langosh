@@ -95,7 +95,7 @@ The end-to-end flow is one command per step:
 `/create` in action — answer a few prompts and the LLM produces a
 complete `definition.json` for you:
 
-![Creating a new graph with /create](https://langosh.ai/assets/create_graph.png)
+<img src="https://langosh.ai/assets/create_graph.png" alt="Creating a new graph with /create" width="560">
 
 For the deep dive — graph types, tool discovery, the compiler, the
 on-disk catalog flow — see [Under the hood](#under-the-hood).
