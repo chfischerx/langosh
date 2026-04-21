@@ -7,6 +7,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.1.4] — 2026-04-21
+
+### Fixed
+
+- Startup banner, `langosh version` fallback, and the
+  tool-discovery `User-Agent` no longer hardcode `0.1.0`. All three
+  now read the version from `importlib.metadata.version("langosh")`,
+  so the displayed value always matches the installed wheel.
+
 ## [0.1.3] — 2026-04-20
 
 ### Added
@@ -129,7 +138,8 @@ Initial public release.
 - **CI + publish** workflows (`ruff` lint, Python 3.11 / 3.12 /
   3.13 matrix, PyPI trusted publishing on tag).
 
-[Unreleased]: https://github.com/chfischerx/langosh/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/chfischerx/langosh/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/chfischerx/langosh/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/chfischerx/langosh/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/chfischerx/langosh/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/chfischerx/langosh/compare/v0.1.0...v0.1.1
