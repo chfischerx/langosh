@@ -18,7 +18,7 @@ def register(app: typer.Typer) -> None:
         try:
             v = get_version("langosh")
         except Exception:
-            v = "0.1.0 (dev)"
+            v = "dev"
         state.console.print(f"langosh [bold cyan]{v}[/bold cyan]")
 
     @app.command()

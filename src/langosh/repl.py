@@ -131,7 +131,13 @@ def repl(app) -> None:
     agents_path = str(get_agents_path())
     server_name = state.active_server_name
     server_url = get_server_url()
-    state.console.print("[bold white]langosh[/bold white] [dim]v0.1.0[/dim]")
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _get_version
+    try:
+        _v = _get_version("langosh")
+    except PackageNotFoundError:
+        _v = "dev"
+    state.console.print(f"[bold white]langosh[/bold white] [dim]v{_v}[/dim]")
     state.console.print(f"[dim]  model:  {name}[/dim]")
     if server_name:
         state.console.print(f"[dim]  server: {server_name} ({server_url})[/dim]")
